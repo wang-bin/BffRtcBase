@@ -8,7 +8,7 @@ class HttpClient {
 public:
     struct Result {
         int httpCode;
-        int sentBytes;
+        int bytesSent;
         std::string responseBody;
         std::string error;
         int curlCode;

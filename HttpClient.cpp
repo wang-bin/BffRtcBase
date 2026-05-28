@@ -195,8 +195,10 @@ HttpClient::Result from(const restincurl::Result& r)
 {
     return {
                 .httpCode = (int)r.http_response_code,
+                .bytesSent = (int)r.bytes_sent,
                 .responseBody = r.body,
                 .error = r.msg,
+                .curlCode = (int)r.curl_code,
             };
 }
 

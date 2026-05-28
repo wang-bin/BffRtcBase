@@ -235,7 +235,8 @@ namespace restincurl {
         
         /*! The HTTP result code for the request */
         long http_response_code = {};
-        
+        curl_off_t bytes_sent = 0;
+
         /*! If the request was unsuccessful (curl_code != 0), the error string reported by libcurl. */
         std::string msg;
         
@@ -362,6 +363,9 @@ namespace restincurl {
      */
     struct DataHandlerBase {
         virtual ~DataHandlerBase() = default;
+
+        /*! Payload bytes supplied via read callback; -1 if unknown. */
+        virtual curl_off_t payloadBytesSent() const { return -1; }
     };
 
     /*! Template implementation for input data to curl during a request.
@@ -417,6 +421,10 @@ namespace restincurl {
 
             RESTINCURL_LOG_TRACE("Sent " << out_bytes << " of total " << self->data_.size() << " bytes.");
             return out_bytes;
+        }
+
+        curl_off_t payloadBytesSent() const override {
+            return static_cast<curl_off_t>(sendt_bytes_);
         }
 
         T data_;
@@ -527,6 +535,14 @@ namespace restincurl {
 
             curl_easy_getinfo (*eh_, CURLINFO_RESPONSE_CODE,
                                &result.http_response_code);
+            curl_easy_getinfo(*eh_, CURLINFO_SIZE_UPLOAD_T, &result.bytes_sent);
+            // if content-length is unknown, cuhunked encoding, CURLINFO_SIZE_UPLOAD_T is a few bytes larger, then must use payloadBytesSent()
+            if (default_out_handler_) {
+                const auto payload_bytes = default_out_handler_->payloadBytesSent();
+                if (payload_bytes >= 0) {
+                    result.bytes_sent = payload_bytes;
+                }
+            }
             RESTINCURL_LOG("Complete: http code: " << result.http_response_code);
             if (completion_) {
                 if (!default_data_buffer_.empty()) {
@@ -542,11 +558,9 @@ namespace restincurl {
                     curl_easy_setopt(*eh_, CURLOPT_HTTPGET, 1L);
                     break;
                 case RequestType::PUT:
-                    headers_ = curl_slist_append(headers_, "Transfer-Encoding: chunked");
                     curl_easy_setopt(*eh_, CURLOPT_UPLOAD, 1L);
                     break;
                 case RequestType::POST:
-                    headers_ = curl_slist_append(headers_, "Transfer-Encoding: chunked");
                     curl_easy_setopt(*eh_, CURLOPT_UPLOAD, 0L);
                     curl_easy_setopt(*eh_, CURLOPT_POST, 1L);
                     break;
@@ -557,7 +571,6 @@ namespace restincurl {
                     curl_easy_setopt(*eh_, CURLOPT_CUSTOMREQUEST, "OPTIONS");
                     break;
                 case RequestType::PATCH:
-                    headers_ = curl_slist_append(headers_, "Transfer-Encoding: chunked");
                     curl_easy_setopt(*eh_, CURLOPT_CUSTOMREQUEST, "PATCH");
                     break;
                 case RequestType::DELETE:
@@ -1398,8 +1411,12 @@ namespace restincurl {
         template <typename T>
         RequestBuilder& SendData(OutDataHandler<T>& dh) {
             assert(!is_built_);
+            const auto size = static_cast<curl_off_t>(dh.data_.size());
             options_->Set(CURLOPT_READFUNCTION, dh.read_callback);
             options_->Set(CURLOPT_READDATA, &dh);
+            // length is known, add Content-Length header. otherwise will use chunked encoding, and uploaded size from CURLINFO_SIZE_UPLOAD_T is a few bytes larger
+            options_->Set(CURLOPT_INFILESIZE_LARGE, size);
+            options_->Set(CURLOPT_POSTFIELDSIZE_LARGE, size);
             have_data_out_ = true;
             return *this;
         }
