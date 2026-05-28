@@ -1,11 +1,17 @@
 
 
 #include "HttpClient.h"
-#include "restincurl.h"
+#if __has_include(<openssl/ssl.h>)
 #include <openssl/ssl.h>
 #include <openssl/x509_vfy.h>
 #include "ssl_roots.h"
+#endif
+#if __has_include(<curl/curl.h>)
+#include "restincurl.h"
+#endif
 #include <vector>
+
+// TODO: sni, HOST header, cert selected, response headers
 
 using namespace std;
 
@@ -40,6 +46,7 @@ static const vector<string>& PinnedCerts()
     return certs;
 }
 
+#ifdef OPENSSL_EXPORT
 #if 0
 static int my_cert_verify_callback(X509_STORE_CTX* store, void* arg) {
     // 获取证书和目标主机名
@@ -129,7 +136,9 @@ bool LoadBuiltinSSLRootCertificates(SSL_CTX* ctx) {
   }
   return count_of_added_certs > 0;
 }
+#endif // OPENSSL_EXPORT
 
+#ifdef LIBCURL_VERSION_MAJOR
 static CURLcode ssl_ctx_callback(CURL* curl, void* ssl_ctx, void* userdata) {
     SSL_CTX *ctx = (SSL_CTX *)ssl_ctx;
     //SSL_CTX_set_cert_verify_callback((SSL_CTX*)ssl_ctx, my_cert_verify_callback, NULL);
@@ -262,3 +271,5 @@ void HttpClient::post(const std::string& url, std::string&& body, CompletionCall
     }
     b.Execute();
 }
+
+#endif // LIBCURL_VERSION_MAJOR
