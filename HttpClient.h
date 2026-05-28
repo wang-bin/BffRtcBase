@@ -14,7 +14,7 @@ public:
         int curlCode;
         std::string responseHeaders; // TODO:
         
-        bool isSecError() const { return false; }
+        bool isSecError() const;
     };
 
     using CompletionCallback = std::function<void(const Result&)>;

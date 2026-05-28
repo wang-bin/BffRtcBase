@@ -145,6 +145,27 @@ static CURLcode ssl_ctx_callback(CURL* curl, void* ssl_ctx, void* userdata) {
     return CURLE_OK;
 }
 
+bool HttpClient::Result::isSecError() const
+{
+    switch (curlCode) {
+        case CURLE_SSL_CACERT:
+        case CURLE_SSL_CACERT_BADFILE:
+        case CURLE_SSL_CRL_BADFILE:
+        case CURLE_SSL_ISSUER_ERROR:
+        case CURLE_SSL_PINNEDPUBKEYNOTMATCH:
+        case CURLE_SSL_INVALIDCERTSTATUS:
+        case CURLE_SSL_CERTPROBLEM:
+        case CURLE_SSL_CIPHER:
+        case CURLE_SSL_CONNECT_ERROR:
+        case CURLE_SSL_ENGINE_NOTFOUND:
+        case CURLE_SSL_ENGINE_SETFAILED:
+        // all CURLE_SSL_*
+            return true;
+        default:
+            return false;
+    }
+}
+
 static restincurl::Client& client()
 {
     static restincurl::Client c;
