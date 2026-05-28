@@ -6,6 +6,7 @@
 #include "restincurl.h"
 #endif
 #include <vector>
+#include <zlib.h>
 
 // TODO: sni, HOST header, cert selected, response headers
 
@@ -135,6 +136,44 @@ void HttpClient::post(const std::string& url, std::string&& body, CompletionCall
         });
     }
     b.Execute();
+}
+
+string gzip(const string& data)
+{
+    if (data.empty()) 
+        return {};
+    z_stream stream;
+    memset(&stream, 0, sizeof(stream));
+    if (deflateInit2(&stream, Z_DEFAULT_COMPRESSION, Z_DEFLATED, 15 + 16, 8, Z_DEFAULT_STRATEGY) != Z_OK)
+        return {};
+    string output;
+    auto capacity = deflateBound(&stream, data.size());
+    output.reserve(capacity);
+    output.resize(capacity);
+    stream.next_in  = (Bytef *)data.data();
+    stream.avail_in = (uInt)data.size();
+    stream.next_out  = (Bytef *)output.data();
+    stream.avail_out = (uInt)capacity;
+    if (deflate(&stream, Z_FINISH) != Z_STREAM_END) {
+        deflateEnd(&stream);
+        return {};
+    }
+    output.resize(stream.total_out);
+    deflateEnd(&stream);
+    return output;
+}
+
+void HttpClient::postGz(const std::string& url, std::string&& uncompressedBody, CompletionCallback&& cb)
+{
+    auto data = gzip(uncompressedBody);
+    if (data.empty()) {
+        if (cb) {
+            cb({.httpCode = 0, .bytesSent = 0, .responseBody = {}, .error = "gzip failed", .curlCode = 0});
+        }
+        return;
+    }
+    header("Content-Encoding", "gzip");
+    post(url, std::move(data), std::move(cb));
 }
 
 #endif // LIBCURL_VERSION_MAJOR

@@ -27,7 +27,8 @@ public:
     void get(const std::string& url, CompletionCallback&& cb = {});
     void post(const std::string& url, CompletionCallback&& cb = {});
     void post(const std::string& url, std::string&& body, CompletionCallback&& cb = {});
-
+    // will compress body with gzip
+    void postGz(const std::string& url, std::string&& uncompressedBody, CompletionCallback&& cb = {});
 private:
     class Private;
     std::unique_ptr<Private> d;
