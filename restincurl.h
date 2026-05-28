@@ -1239,7 +1239,7 @@ namespace restincurl {
          * 
          * \param body Json payload to send with the request. 
         */
-        RequestBuilder& WithJson(std::string body) {
+        RequestBuilder& WithJson(std::string&& body) {
             WithJson();
             return SendData(std::move(body));
         }
