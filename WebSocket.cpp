@@ -320,11 +320,9 @@ public:
             active_send.reset();
         }
 
-        running.store(false);
         easy.store(nullptr, std::memory_order_release);
-
         // If the remote did not already close, report a local close now.
-        if (!close_called) {
+        if (running.exchange(false) && !close_called) {
             fireClose(1000, {}, false);
         }
     }
