@@ -28,7 +28,7 @@
 
 
 
-/*! \file */ 
+/*! \file */
 
 #include <algorithm>
 #include <atomic>
@@ -68,14 +68,14 @@
 
 /*! \def RESTINCURL_MAX_CONNECTIONS
  * \brief Max concurrent connections
- * 
+ *
  * This option restrains the maximum number of concurrent
- * connections that will be used at any time. It sets 
+ * connections that will be used at any time. It sets
  * libcurl's `CURLMOPT_MAXCONNECTS` option, and also
- * puts any new requests in a waiting queue. As soon as 
+ * puts any new requests in a waiting queue. As soon as
  * some active request finish, the oldest waiting request
  * will be served (FIFO queue).
- * 
+ *
  * The default value is 32
  */
 #ifndef RESTINCURL_MAX_CONNECTIONS
@@ -84,12 +84,12 @@
 
 /*! \def RESTINCURL_ENABLE_ASYNC
  * \brief Enables or disables asynchronous mode.
- * 
- * In  asynchronous mode, many requests can be 
- * served simultaneously using a worker-thread. 
+ *
+ * In  asynchronous mode, many requests can be
+ * served simultaneously using a worker-thread.
  * In synchronous mode, you use the current
- * thread to serve only one request at the time. 
- * 
+ * thread to serve only one request at the time.
+ *
  * Default is 1 (asynchronous mode enabled).
  */
 
@@ -99,12 +99,12 @@
 
 /*! \def RESTINCURL_IDLE_TIMEOUT_SEC
  * \brief How long to wait for the next request before the idle worker-thread is stopped.
- * 
+ *
  * This will delete curl's connection-cache and cause a new thread to be created
  * and new connections to be made if there are new requests at at later time.
- * 
+ *
  * Note that this option is only relevant in asynchronous mode.
- * 
+ *
  * Default is 60 seconds.
  */
 #ifndef RESTINCURL_IDLE_TIMEOUT_SEC
@@ -113,10 +113,10 @@
 
 /*! \def RESTINCURL_LOG_VERBOSE_ENABLE
  * \brief Enable very verbose logging
- * 
+ *
  * This option enabled very verbose logging, suitable to
  * pinpoint problems during development / porting of the library itself.
- * 
+ *
  * Default is 0 (disabled).
  */
 #ifndef RESTINCURL_LOG_VERBOSE_ENABLE
@@ -143,16 +143,16 @@
 
 /*! \def RESTINCURL_ENABLE_DEFAULT_LOGGER
  * \brief Enables a simple built-in logger
- * 
+ *
  * RESTinCurl has a very simple built in logger.
- * 
+ *
  * It writes to either std::clog, the Unix syslog or Androids log facility.
- * 
+ *
  * - Define RESTINCURL_USE_SYSLOG to use syslog
  * - Define RESTINCURL_USE_ANDROID_NDK_LOG to use the Android NDK logger.
- * 
+ *
  * By default, it will write to std::clog.
- * 
+ *
  * Default value is 0 (disabled)
  */
 #ifndef RESTINCURL_ENABLE_DEFAULT_LOGGER
@@ -161,15 +161,15 @@
 
 /*! \def RESTINCURL_LOG
  * \brief Macro to log debug messages
- * 
+ *
  * If you want to log messages from the library to your own log facility, you
  * may define this macro to do so.
- * 
+ *
  * Note that the logging statements in the library expect the log `msg` to be
  * std::ostream compliant. The macro must be able to deal with statement such as:
  *   - RESTINCURL_LOG("test");
  *   - RESTINCURL_LOG("test " << 1 << " and " << 2);
- * 
+ *
  * If you manually define this macro, you should not define `RESTINCURL_ENABLE_DEFAULT_LOGGER`.
  */
 #ifndef RESTINCURL_LOG
@@ -182,17 +182,17 @@
 
 /*! \def RESTINCURL_LOG_TRACE
  * \brief Macro to log debug messages
- * 
+ *
  * If you want to log trace-messages from the library to your own log facility, you
  * may define this macro to do so.
- * 
+ *
  * Note that the logging statements in the library expect the log `msg` to be
  * std::ostream compliant. The macro must be able to deal with statement such as:
  *   - RESTINCURL_LOG_TRACE("test");
  *   - RESTINCURL_LOG_TRACE("test " << 1 << " and " << 2);
- * 
+ *
  * If you manually define this macro, you should not define `RESTINCURL_ENABLE_DEFAULT_LOGGER`.
- * 
+ *
  * This macro is only called if `RESTINCURL_LOG_VERBOSE_ENABLE` is defined and not 0.
  */
 #ifndef RESTINCURL_LOG_TRACE
@@ -215,7 +215,7 @@ namespace restincurl {
             curl_code = code;
             msg = curl_easy_strerror(code);
         }
-        
+
         /*! Check if the reqtest appears to be successful */
         bool isOk() const noexcept {
             if (curl_code == CURLE_OK) {
@@ -223,36 +223,36 @@ namespace restincurl {
                     return true;
                 }
             }
-            
+
             return false;
         }
 
         /*! The CURLcode returned by libcurl for this request.
-         * 
+         *
          * CURLE_OK (or 0) indicates success.
          */
         CURLcode curl_code = {};
-        
+
         /*! The HTTP result code for the request */
         long http_response_code = {};
         curl_off_t bytes_sent = 0;
 
         /*! If the request was unsuccessful (curl_code != 0), the error string reported by libcurl. */
         std::string msg;
-        
+
         /*! The body of the request returned by the server.
-         * 
+         *
          * Note that if you specified your own body handler or body variable, for the request, `body` will be empty.
          */
         std::string body;
     };
 
     enum class RequestType { GET, PUT, POST, HEAD, DELETE, PATCH, OPTIONS, POST_MIME, INVALID };
-    
+
     /*! Completion debug_callback
-     * 
+     *
      * This callback is called when a request completes, or fails.
-     * 
+     *
      * \param result The result of the request.
      */
     using completion_fn_t = std::function<void (const Result& result)>;
@@ -321,15 +321,15 @@ namespace restincurl {
     };
 
     /*! Curl option wrapper class
-     * 
+     *
      * This is just a thin C++ wrapper over Curl's `curl_easy_setopt()` method.
      */
     class Options {
     public:
         Options(EasyHandle& eh) : eh_{eh} {}
 
-        /*! Set an option 
-         * 
+        /*! Set an option
+         *
          * \param opt CURLoption enum to change
          * \param value Value to set
          */
@@ -343,8 +343,8 @@ namespace restincurl {
             return *this;
         }
 
-        /*! Set an option 
-         * 
+        /*! Set an option
+         *
          * \param opt CURLoption enum to change
          * \param value String value to set
          */
@@ -357,7 +357,7 @@ namespace restincurl {
     };
 
     /*! Abstract base class for Data Handlers
-     * 
+     *
      * Data handlers are used to handle libcurl's callback requirements
      * for input and output data.
      */
@@ -369,10 +369,10 @@ namespace restincurl {
     };
 
     /*! Template implementation for input data to curl during a request.
-     * 
+     *
      * This handler deals with the data received from the HTTP server
      * during a request. This implementation will typically use
-     * T=std::string and just store the received data in a string. For 
+     * T=std::string and just store the received data in a string. For
      * json/XML payloads that's probably all you need. But if you receive
      * binary data, you may want to use a container like std::vector or std::deque in stead.
      */
@@ -396,10 +396,10 @@ namespace restincurl {
     };
 
      /*! Template implementation for output data to curl during a request.
-     * 
+     *
      * This handler deals with the data sent to the HTTP server
      * during a request (POST, PATCH etc). This implementation will typically use
-     * T=std::string and just store the data in a string. For 
+     * T=std::string and just store the data in a string. For
      * json/XML payloads that's probably all you need. But if you send
      * binary data, you may want to use a container like std::vector or std::deque in stead.
      */
@@ -647,33 +647,33 @@ namespace restincurl {
     private:
         pipefd_t pipefd_;
     };
-    
+
     /*! Thread support for the TLS layer used by libcurl.
-     * 
+     *
      * Some TLS libraries require that you supply callback functions
      * to deal with thread synchronization.
-     * 
+     *
      * See https://curl.haxx.se/libcurl/c/threadsafe.html
-     * 
+     *
      * You can deal with this yourself, or in the case
      * that RESTinCurl support your TLS library, you can use
      * this class.
-     * 
+     *
      * Currently supported libraries:
-     * 
-     *  - Opeenssl (only required for OpenSSL <= 1.0.2) 
+     *
+     *  - Opeenssl (only required for OpenSSL <= 1.0.2)
      *      define `RESTINCURL_WITH_OPENSSL_THREADS`
-     * 
+     *
      * The class is written so that you can use it in your code, and
      * it will only do something when the appropriate define is set.
-     * 
+     *
      * This class is only available when `RESTINCURL_ENABLE_ASYNC` is nonzero.
      */
-    class TlsLocker 
+    class TlsLocker
     {
     public:
-        
-#ifdef RESTINCURL_WITH_OPENSSL_THREADS 
+
+#ifdef RESTINCURL_WITH_OPENSSL_THREADS
     static void opensslLockCb(int mode, int type, char *, int) {
         if(mode & CRYPTO_LOCK) {
            lock();
@@ -682,28 +682,28 @@ namespace restincurl {
            unlock();
         }
     }
-    
+
     static unsigned long getThreadId(void) {
         return reinterpret_cast<unsigned long>(::this_thread::get_id());
     }
-    
+
     /*! Enable the built-in support. */
     static void tlsLockInit() {
         CRYPTO_set_id_callback((unsigned long (*)())getThreadId);
         CRYPTO_set_locking_callback((void (*)())opensslLockCb);
     }
-    
+
     /*! Free up resources used when finished using TLS. */
     static void tlsLockKill() {
         CRYPTO_set_locking_callback(NULL);
     }
-    
+
 #else
     /*! Enable the built-in support. */
     static void tlsLOckInit() {
         ; // Do nothing
     }
-    
+
     /*! Free up resources used when finished using TLS. */
     static void tlsLockKill() {
         ; // Do nothing
@@ -711,20 +711,20 @@ namespace restincurl {
 #endif
 
 
-    
+
 
     private:
         static void lock() {
             mutex_.lock();
         }
-        
+
         static void unlock() {
             mutex_.unlock();
         }
-        
+
         static std::mutex mutex_;
     };
-    
+
     class Worker {
         class WorkerThread {
         public:
@@ -934,9 +934,6 @@ namespace restincurl {
 
         void Run() {
             int transfers_running = -1;
-            fd_set fdread = {};
-            fd_set fdwrite = {};
-            fd_set fdexcep = {};
             bool do_dequeue = true;
             auto timeout = GetNextTimeout();
 
@@ -998,59 +995,35 @@ namespace restincurl {
                     }
                 }
 
-                auto next_timeout = std::chrono::duration_cast<std::chrono::milliseconds>(
-                    timeout - std::chrono::steady_clock::now());
-                long sleep_duration = std::max<long>(1, next_timeout.count());
-                /* extract sleep_duration value */
-
-
-                FD_ZERO(&fdread);
-                FD_ZERO(&fdwrite);
-                FD_ZERO(&fdexcep);
-
-                int maxfd = -1;
+                using namespace std::chrono;
+                long sleep_duration = std::max<long>(1, (timeout - steady_clock::now())/1ms);
                 if (transfers_running > 0) {
                     curl_multi_timeout(handle_, &sleep_duration);
                     if (sleep_duration < 0) {
                         sleep_duration = 1000;
                     }
+                }
 
-                    /* get file descriptors from the transfers */
-                    const auto mc = curl_multi_fdset(handle_, &fdread, &fdwrite, &fdexcep, &maxfd);
-                    RESTINCURL_LOG_TRACE("maxfd: " << maxfd);
-                    if (mc != CURLM_OK) {
-                        throw CurlException("curl_multi_fdset", mc);
-                    }
+                struct curl_waitfd extra = {};
+                extra.fd = signal_.GetReadFd();
+                extra.events = CURL_WAIT_POLLIN;
 
-                    if (maxfd == -1) {
-                        // Curl want's us to revisit soon
-                        sleep_duration = 50;
-                    }
-                } // active transfers
-
-                struct timeval tv = {};
-                tv.tv_sec = sleep_duration / 1000;
-                tv.tv_usec = (sleep_duration % 1000) * 1000;
-
-                const auto signalfd = signal_.GetReadFd();
-
-                RESTINCURL_LOG_TRACE("Calling select() with timeout of "
+                RESTINCURL_LOG_TRACE("Calling curl_multi_poll() with timeout of "
                     << sleep_duration
-                    << " ms. Next timeout in " << next_timeout.count() << " ms. "
+                    << " ms. "
                     << transfers_running << " active transfers.");
 
-                FD_SET(signalfd, &fdread);
-                maxfd = std::max(signalfd,  maxfd) + 1;
+                int numfds = 0;
+                const auto mc = curl_multi_poll(handle_, &extra, 1, sleep_duration, &numfds);
+                RESTINCURL_LOG_TRACE("curl_multi_poll returned: " << mc << ", numfds: " << numfds);
 
-                const auto rval = select(maxfd, &fdread, &fdwrite, &fdexcep, &tv);
-                RESTINCURL_LOG_TRACE("select(" << maxfd << ") returned: " << rval);
+                if (mc != CURLM_OK) {
+                    throw CurlException("curl_multi_poll", mc);
+                }
 
-                if (rval > 0) {
-                    if (FD_ISSET(signalfd, &fdread)) {
-                        RESTINCURL_LOG_TRACE("FD_ISSET was true: ");
-                        do_dequeue = signal_.WasSignalled();
-                    }
-
+                if (numfds > 0 && (extra.revents & CURL_WAIT_POLLIN)) {
+                    RESTINCURL_LOG_TRACE("Signaler was signalled");
+                    do_dequeue = signal_.WasSignalled();
                 }
                 if (pending_entries_in_queue_) {
                     do_dequeue = true;
@@ -1077,12 +1050,12 @@ namespace restincurl {
     };
 #endif // RESTINCURL_ENABLE_ASYNC
 
-  
+
     /*! Convenient interface to build requests.
-     * 
-     * Even if this is a light-weight wrapper around libcurl, we have a 
+     *
+     * Even if this is a light-weight wrapper around libcurl, we have a
      * simple and modern way to define our requests that contains
-     * convenience-methods for the most common use-cases. 
+     * convenience-methods for the most common use-cases.
      */
     class RequestBuilder {
         // noop handler for incoming data
@@ -1166,18 +1139,18 @@ namespace restincurl {
         }
 
 
-        /*! 
+        /*!
          * \name Type of request
-         * 
+         *
          * Use one of these functions to declare what HTTP request you want to use.
-         * 
-         * \param url Url to call. Must be a complete URL, starting with 
-         *      "http://" or "https://" 
-         * 
+         *
+         * \param url Url to call. Must be a complete URL, starting with
+         *      "http://" or "https://"
+         *
          * Note that you must use only only one of these methods in one request.
          */
         //@{
-         
+
         /*! Use a HTTP GET request */
         RequestBuilder& Get(const std::string& url) {
             return Prepare(RequestType::GET, url);
@@ -1220,7 +1193,7 @@ namespace restincurl {
         //@}
 
         /*! Specify a HTTP header for the request.
-         * 
+         *
          * \param value The value of the header-line, properly formatted according to the relevant HTTP specifications.
          */
         RequestBuilder& Header(const char *value) {
@@ -1231,10 +1204,10 @@ namespace restincurl {
         }
 
          /*! Specify a HTTP header for the request.
-         * 
+         *
          * \param name Name of the header
          * \param value The value of the header
-         * 
+         *
          * This is a convenience method that will build the appropriate header for you.
          */
         RequestBuilder& Header(const std::string& name,
@@ -1247,10 +1220,10 @@ namespace restincurl {
         RequestBuilder& WithJson() {
             return Header("Content-type: Application/json; charset=utf-8");
         }
-        
+
         /*! Sets the content-type to "Application/json; charset=utf-8"
-         * 
-         * \param body Json payload to send with the request. 
+         *
+         * \param body Json payload to send with the request.
         */
         RequestBuilder& WithJson(std::string&& body) {
             WithJson();
@@ -1263,15 +1236,15 @@ namespace restincurl {
         }
 
         /*! Sets a Curl options.
-         * 
+         *
          * \param opt CURLoption enum specifying the option
-         * \param value Value to set. 
-         * 
+         * \param value Value to set.
+         *
          * It is critical that the type of the value is of the same type that
          * libcurl is expecting for the option. RESTinCurl makes no attempt
          * to validate or cast the values.
-         * 
-         * Please refer to the libcurl documentation for curl_easy_setopt() 
+         *
+         * Please refer to the libcurl documentation for curl_easy_setopt()
          */
         template <typename T>
         RequestBuilder& Option(const CURLoption& opt, const T& value) {
@@ -1280,11 +1253,11 @@ namespace restincurl {
             return *this;
         }
 
-        /*! Enables or disables trace logging for requests. 
-         * 
+        /*! Enables or disables trace logging for requests.
+         *
          * The trace logging will show detailed information about what
-         * libcurl does and data sent and received during a request. 
-         * 
+         * libcurl does and data sent and received during a request.
+         *
          * Basically it sets `CURLOPT_DEBUGFUNCTION` and `CURLOPT_VERBOSE`.
          */
         RequestBuilder& Trace(bool enable = true) {
@@ -1294,12 +1267,12 @@ namespace restincurl {
             } else {
                 Option(CURLOPT_VERBOSE, 0L);
             }
-            
+
             return *this;
         }
 
-        /*! Set request timeout 
-         * 
+        /*! Set request timeout
+         *
          * \param timeout Timeout in milliseconds. Set to -1 to use the default.
          */
         RequestBuilder& RequestTimeout(const long timeout) {
@@ -1308,7 +1281,7 @@ namespace restincurl {
         }
 
         /*! Set the connect timeout for a request
-         * 
+         *
          * \param timeout Timeout in milliseconds. Set to -1 to use the default.
          */
         RequestBuilder& ConnectTimeout(const long timeout) {
@@ -1399,13 +1372,13 @@ namespace restincurl {
         }
 
         /*! Specify Data Handler for outbound data
-         * 
+         *
          * You can use this method when you need to use a Data Handler, rather than a simple string,
          * to provide the data for a POST, PUT etc. request.
-         * 
+         *
          * \param dh Data Handler instance.
-         * 
-         * Note that the Data Handler is passed by reference. It is your responsibility that the 
+         *
+         * Note that the Data Handler is passed by reference. It is your responsibility that the
          * instance is present at least until the request has finished (your code owns the Data Handler instance).
          */
         template <typename T>
@@ -1422,10 +1395,10 @@ namespace restincurl {
         }
 
         /*! Convenience method to specify a object that contains the data to send during a request.
-         * 
+         *
          * \param data Data to send. Typically this will be a std::string, std::vector<char> or a similar
-         *      object. 
-         * 
+         *      object.
+         *
          * RESTinCurl takes ownership of this data (by moving it).
          */
         template <typename T>
@@ -1438,13 +1411,13 @@ namespace restincurl {
         }
 
         /*! Specify Data Handler for inbound data
-         * 
+         *
          * You can use this method when you need to use a Data Handler, rather than a simple string,
          * to receive data during the request.
-         * 
+         *
          * \param dh Data Handler instance.
-         * 
-         * Note that the Data Handler is passed by reference. It is your responsibility that the 
+         *
+         * Note that the Data Handler is passed by reference. It is your responsibility that the
          * instance is present at least until the request has finished (your code owns the Data Handler instance).
          */
         template <typename T>
@@ -1457,11 +1430,11 @@ namespace restincurl {
         }
 
         /*! Convenience method to specify a object that receives incoming data during a request.
-         * 
-         * \param data Buffer to hold incoming data. Typically this will be a std::string, 
-         *      std::vector<char> or a similar object. 
-         * 
-         * Note that data is passed by reference. It is your responsibility that the 
+         *
+         * \param data Buffer to hold incoming data. Typically this will be a std::string,
+         *      std::vector<char> or a similar object.
+         *
+         * Note that data is passed by reference. It is your responsibility that the
          * instance is present at least until the request has finished (your code owns the object).
          */
         template <typename T>
@@ -1486,9 +1459,9 @@ namespace restincurl {
         }
 
         /*! Specify a callback that will be called when the request is complete (or failed).
-         * 
+         *
          * \param fn Callback to be called
-         * 
+         *
          * For asynchronous requests, the callback will be called from the worker-thread shared
          * by all requests and timers for the client instance. It is imperative that you return
          * immediately, and don't keep the thread busy more than strictly required. If you need
@@ -1529,10 +1502,10 @@ namespace restincurl {
             return *this;
         }
 
-        /*! Set a Curl compatible read handler. 
-         * 
+        /*! Set a Curl compatible read handler.
+         *
          * \param handler Curl C API read handler
-         * 
+         *
          * You probably don't need to call this directly.
          */
         RequestBuilder& SetReadHandler(size_t (*handler)(char *, size_t , size_t , void *), void *userdata) {
@@ -1542,10 +1515,10 @@ namespace restincurl {
             return *this;
         }
 
-        /*! Set a Curl compatible write handler. 
-         * 
+        /*! Set a Curl compatible write handler.
+         *
          * \param handler Curl C API write handler
-         * 
+         *
          * You probably don't need to call this directly.
          */
         RequestBuilder& SetWriteHandler(size_t (*handler)(char *, size_t , size_t , void *), void *userdata) {
@@ -1591,12 +1564,12 @@ namespace restincurl {
         }
 
         /*! Execute the request synchronously
-         * 
+         *
          * This will execute the request and call the callback (if you declared one) in the
-         * current thread before the method returns. 
-         * 
+         * current thread before the method returns.
+         *
          * \throws restincurl::Exception derived exceptions on error
-         * 
+         *
          * This method is available even when `RESTINCURL_ENABLE_ASYNC` is enabled ( != 0).
          */
         void ExecuteSynchronous() {
@@ -1607,14 +1580,14 @@ namespace restincurl {
 #if RESTINCURL_ENABLE_ASYNC
 
          /*! Execute the request asynchronously
-         * 
+         *
          * This will queue the request for processing. If the number of active requests are
-         * less than `RESTINCURL_MAX_CONNECTIONS`, the request will start executing almost immediately. 
-         * 
+         * less than `RESTINCURL_MAX_CONNECTIONS`, the request will start executing almost immediately.
+         *
          * The method returns immediately.
-         * 
+         *
          * \throws restincurl::Exception derived exceptions on error
-         * 
+         *
          * This method is only available when `RESTINCURL_ENABLE_ASYNC` is nonzero.
          */
         void Execute() {
@@ -1727,29 +1700,29 @@ namespace restincurl {
     };
 
     /*! The high level abstraction of the Curl library.
-     * 
+     *
      * An instance of a Client will, if asynchronous mode is enabled, create a
      * worker-thread when the first request is made. This single worker-thread
      * is then shared between all requests made for this client. When no requests
-     * are active, the thread will wait for a while (see RESTINCURL_IDLE_TIMEOUT_SEC), 
-     * keeping libcurl's connection-cache warm, to serve new requests as efficiently as 
-     * possible. When the idle time period expires, the thread will terminate and 
-     * close the connection-cache associated with the client. 
+     * are active, the thread will wait for a while (see RESTINCURL_IDLE_TIMEOUT_SEC),
+     * keeping libcurl's connection-cache warm, to serve new requests as efficiently as
+     * possible. When the idle time period expires, the thread will terminate and
+     * close the connection-cache associated with the client.
      * If a new request is made later on, a new worker-thread will be created.
      */
     class Client {
 
     public:
         /*! Constructor
-         * 
+         *
          * \param init Set to true if you need to initialize libcurl.
-         * 
+         *
          * Libcurl require us to call an initialization method once, before using the library.
          * If you use libcurl exclusively from RESTinCurl, `init` needs to be `true` (default). If
          * you use RESTinCurl in a project that already initialize libcurl, you should pass `false`
          * to the constructor.
-         * 
-         * RESTinCurl will only call libcurl's initialization once, no matter how many times you 
+         *
+         * RESTinCurl will only call libcurl's initialization once, no matter how many times you
          * call the constructor. It's therefore safe to always use the default value when you want RESTinCurl
          * to deal with libcurl's initialization.
          */
@@ -1764,12 +1737,12 @@ namespace restincurl {
         }
 
         /*! Destructor
-         * 
+         *
          * The destructor will try to clean up resources (when in asynchronous mode)
-         * ant may wait for a little while for IO operations to stop and the worker-thread to 
-         * finish. 
-         * 
-         * This is to prevent your application for crashing if you exit the main thread while 
+         * ant may wait for a little while for IO operations to stop and the worker-thread to
+         * finish.
+         *
+         * This is to prevent your application for crashing if you exit the main thread while
          * the worker-thread is still working and accessing memory own by the Client instance.
          */
         virtual ~Client() {
@@ -1785,10 +1758,10 @@ namespace restincurl {
         }
 
         /*! Build a request
-         * 
+         *
          * Requests are "built" using a series of statements
          * to fully express what you want to do and how you want RESTinCurl to do it.
-         * 
+         *
          * Example
          * \code
                 restincurl::Client client;
@@ -1811,7 +1784,7 @@ namespace restincurl {
 
 #if RESTINCURL_ENABLE_ASYNC
         /*! Shut down the event-loop and clean up internal resources when all active and queued requests are done.
-         * 
+         *
          * This method is only available when `RESTINCURL_ENABLE_ASYNC` is nonzero.
          */
         void CloseWhenFinished() {
@@ -1819,12 +1792,12 @@ namespace restincurl {
         }
 
         /*! Close the client.
-         * 
-         * This method aborts any and all requests. 
-         * 
+         *
+         * This method aborts any and all requests.
+         *
          * The worked-thread will exit shortly after this method is
          * called, if it was running.
-         * 
+         *
          * This method is only available when `RESTINCURL_ENABLE_ASYNC` is nonzero.
          */
         void Close() {
@@ -1832,9 +1805,9 @@ namespace restincurl {
         }
 
         /*! Wait for the worker-thread to finish.
-         * 
+         *
          * You should call Close() first.
-         * 
+         *
          * This method is only available when `RESTINCURL_ENABLE_ASYNC` is nonzero.
          */
         void WaitForFinish() {
@@ -1842,7 +1815,7 @@ namespace restincurl {
         }
 
         /*! Check if the client instance has a worker-thread.
-         * 
+         *
          * This method is only available when `RESTINCURL_ENABLE_ASYNC` is nonzero.
          */
         bool HaveWorker() const {
@@ -1850,7 +1823,7 @@ namespace restincurl {
         }
 
         /*! Get the number of active / ongoing requests.
-         * 
+         *
          * This method is only available when `RESTINCURL_ENABLE_ASYNC` is nonzero.
          */
         size_t GetNumActiveRequests() {
@@ -1866,4 +1839,3 @@ namespace restincurl {
 
 
 } // namespace
-
