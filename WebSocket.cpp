@@ -18,7 +18,7 @@
 #include <sys/time.h>
 #include <unistd.h>
 
-namespace jspp {
+namespace bff {
 
 
 static CURLcode ssl_ctx_callback(CURL* curl, void* ssl_ctx, void* userdata) {
@@ -445,6 +445,6 @@ int WebSocket::lastErrorCode() const noexcept {
     return d->last_error_code;
 }
 
-} // namespace jspp
+} // namespace bff
 
 #endif // __has_include(<curl/curl.h>)

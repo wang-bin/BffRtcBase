@@ -5,7 +5,7 @@
 #include <memory>
 #include <string>
 
-namespace jspp {
+namespace bff {
 
 class WebSocket {
 public:
@@ -49,5 +49,5 @@ private:
     std::unique_ptr<Private> d;
 };
 
-} // namespace jspp
+} // namespace bff
 
