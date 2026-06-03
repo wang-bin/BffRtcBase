@@ -7,6 +7,7 @@
 #include <utility>
 #include <vector>
 
+#include "NodeSelector.h"
 #include "defs.h"
 #include "rtc.pb-c.h"
 #include "SignalListener.h"
@@ -44,6 +45,15 @@ public:
     void setOrientation(bool orientation);
     bool orientation() const;
 
+    // Node selection helpers.
+    void updateNodes(const std::vector<std::string>& servers,
+                     const std::string* token,
+                     NodeSelector::CompletionCallback completionHandler);
+    void updateNodes(const std::string& server,
+                     NodeSelector::CompletionCallback completionHandler);
+    void connectBestUrl(const std::string& serverUrl,
+                        NodeSelector::BestUrlCallback completionHandler);
+
     // Sender-side APIs (channel-scoped).
     void join(const std::string& node, int channel);
     void srtpKey(const std::string& key, Rtc__SrtpProfile profile, int channel);
@@ -56,6 +66,7 @@ public:
     void nodeRtts(const std::vector<std::pair<std::string, int>>& rtts, int channel);
     void mute(bool on, uint32_t rtpTime, bool video, int channel);
     void selectChannel(int select, int channel);
+    // TODO: use protobuf binary
     void report(const Rtc__Stats* stats, int64_t startTimeSinceEpoch, int channel);
 
     // Receiver-side APIs.
@@ -67,15 +78,15 @@ private:
     SignalListener* listenerForChannel(int channel) const;
     void enumerateListeners(const std::function<void(int channel, SignalListener*)>& fn) const;
     bool sendRequest(Rtc__SignalRequest& req, bool important = false);
+    void sendNodeRttsToAllChannels(const NodeSelector::Rtts& rtts);
 
     static uint32_t timestampMs32();
     static bool parseIceCandidateJson(const std::string& json, IceCandidate* out);
 
 private:
     class Private;
-    std::unique_ptr<Private> d_;
+    std::shared_ptr<Private> d_;
 };
 
 using SignalPtr = std::shared_ptr<Signal>;
 } // namespace bff
-

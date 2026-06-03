@@ -5,8 +5,65 @@
 #include <mutex>
 #include <unordered_map>
 
+#include "NodeSelector.h"
 #include "WebSocket.h"
 #include "json.hpp"
+
+namespace {
+
+// Extract host part from a URL or "host:port" string.
+static std::string hostFromUrl(const std::string& url) {
+    auto s = url;
+    auto scheme = s.find("://");
+    if (scheme != std::string::npos) {
+        s = s.substr(scheme + 3);
+    }
+    auto slash = s.find('/');
+    if (slash != std::string::npos) {
+        s = s.substr(0, slash);
+    }
+    if (!s.empty() && s.front() == '[') {
+        auto rb = s.find(']');
+        if (rb != std::string::npos) {
+            return s.substr(1, rb - 1);
+        }
+        return s;
+    }
+    auto colon = s.find(':');
+    if (colon != std::string::npos) {
+        return s.substr(0, colon);
+    }
+    return s;
+}
+
+// Extract port from a URL, defaulting to 443 if absent.
+static uint32_t portFromUrl(const std::string& url) {
+    auto s = url;
+    auto scheme = s.find("://");
+    if (scheme != std::string::npos) {
+        s = s.substr(scheme + 3);
+    }
+    auto slash = s.find('/');
+    if (slash != std::string::npos) {
+        s = s.substr(0, slash);
+    }
+    if (!s.empty() && s.front() == '[') {
+        auto rb = s.find(']');
+        if (rb == std::string::npos) return 443;
+        auto colon = s.find(':', rb);
+        if (colon == std::string::npos) return 443;
+        return static_cast<uint32_t>(std::stoul(s.substr(colon + 1)));
+    }
+    auto colon = s.rfind(':');
+    if (colon == std::string::npos) return 443;
+    // Make sure it's not an IPv6 separator (no '[' implies IPv4 or hostname).
+    if (s.find(':') == colon) {
+        return static_cast<uint32_t>(std::stoul(s.substr(colon + 1)));
+    }
+    return 443;
+}
+
+} // anonymous namespace
 
 namespace bff {
 
@@ -62,14 +119,25 @@ public:
     uint32_t port = 0;
     int reconnect_count = 0;
     int last_code = 0;
+    NodeSelector::Hosts hosts_;
+    std::string server_url_;
     bool orientation = false;
     bool auto_media_join = true;
     bool join_requested = false;
+    NodeSelector node_selector;
 };
 
-Signal::Signal() : d_(std::make_unique<Private>(this)) {}
+Signal::Signal() : d_(std::make_shared<Private>(this)) {
+    auto d = d_;
+    d->node_selector.setUpdateRttsCallback([d](const NodeSelector::Rtts& result) {
+        if (!d->owner) return;
+        d->owner->sendNodeRttsToAllChannels(result);
+    });
+}
 
-Signal::~Signal() = default;
+Signal::~Signal() {
+    d_->owner = nullptr;
+}
 
 void Signal::setSendRequestFn(SendRequestFn sendFn) {
     d_->send_request_fn = std::move(sendFn);
@@ -149,6 +217,61 @@ void Signal::setOrientation(bool orientation) {
 
 bool Signal::orientation() const {
     return d_->orientation;
+}
+
+void Signal::updateNodes(const std::vector<std::string>& servers,
+                         const std::string* token,
+                         NodeSelector::CompletionCallback completionHandler) {
+    d_->node_selector.updateNodes(servers, token, std::move(completionHandler));
+}
+
+void Signal::updateNodes(const std::string& server,
+                         NodeSelector::CompletionCallback completionHandler) {
+    d_->node_selector.updateNodes(server, std::move(completionHandler));
+}
+
+void Signal::connectBestUrl(const std::string& serverUrl,
+                            NodeSelector::BestUrlCallback completionHandler) {
+    auto d = d_;
+    d->node_selector.getBestUrl(serverUrl,
+        [d, completionHandler = std::move(completionHandler)](const std::string& bestUrl, const NodeSelector::Hosts* hosts) mutable {
+            if (!d->owner) return;
+            if (hosts) {
+                d->hosts_ = *hosts;
+            }
+            d->server_url_ = bestUrl;
+            d->host = hostFromUrl(bestUrl);
+            d->port = portFromUrl(bestUrl);
+
+            // Reset connection state, mirroring JsppWebSocket connectServerUrl.
+            d->important_reqs.clear();
+            d->rtts.clear();
+            d->last_offer.clear();
+            d->auto_media_join = true;
+            d->reconnect_count = 0;
+            d->last_code = 0;
+
+            d->state_string = "connecting";
+            d->websocket.open(bestUrl);
+
+            if (completionHandler) {
+                completionHandler(bestUrl, hosts);
+            }
+        });
+}
+
+void Signal::sendNodeRttsToAllChannels(const NodeSelector::Rtts& result) {
+    std::vector<int> channels;
+    {
+        std::lock_guard<std::mutex> lock(d_->listeners_mtx);
+        channels.reserve(d_->listeners.size());
+        for (const auto& kv : d_->listeners) {
+            channels.push_back(kv.first);
+        }
+    }
+    for (int channel : channels) {
+        nodeRtts(result, channel);
+    }
 }
 
 void Signal::join(const std::string& node, int channel) {
@@ -375,6 +498,32 @@ void Signal::handleReceiveSignalResponse(const Rtc__SignalResponse* signalRespon
             }
             break;
         }
+        case RTC__SIGNAL_RESPONSE__MESSAGE_NODE_LIST: {
+            if (signalResponse->node_list) {
+                std::vector<std::string> nodes;
+                nodes.reserve(signalResponse->node_list->n_ips);
+                for (size_t i = 0; i < signalResponse->node_list->n_ips; ++i) {
+                    if (signalResponse->node_list->ips[i]) {
+                        nodes.emplace_back(signalResponse->node_list->ips[i]);
+                    }
+                }
+                std::string clientIpOwned;
+                if (signalResponse->node_list->client_ip && signalResponse->node_list->client_ip[0]) {
+                    clientIpOwned = signalResponse->node_list->client_ip;
+                    d_->client_ip = clientIpOwned;
+                } else if (!d_->client_ip.empty()) {
+                    clientIpOwned = d_->client_ip;
+                }
+                const std::string* clientIp = clientIpOwned.empty() ? nullptr : &clientIpOwned;
+                const auto bestNode = d_->node_selector.onNodeList(nodes,
+                                                                 static_cast<uint16_t>(signalResponse->node_list->stun_port),
+                                                                 clientIp);
+                if (!bestNode.empty()) {
+                    d_->preferred_node = bestNode;
+                }
+            }
+            break;
+        }
         case RTC__SIGNAL_RESPONSE__MESSAGE_PONG:
             if (signalResponse->pong) {
                 d_->rtts[static_cast<int>(signalResponse->channel)] = timestampMs32() - signalResponse->pong->timestamp;
@@ -528,4 +677,3 @@ bool Signal::parseIceCandidateJson(const std::string& json, IceCandidate* out) {
 }
 
 } // namespace bff
-
