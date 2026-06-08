@@ -32,9 +32,9 @@ code – The codes can be looked up here: CloseFrame
 reason – Additional information string
 remote – Returns whether or not the closing of the connection was initiated by the remote host.
     */
-    using on_close_fn_t = std::function<void(int code, const std::string& reason, bool remote)>;
-    using on_error_fn_t = std::function<void(int code, const std::string& error)>;
-    using on_recv_fn_t = std::function<void(const std::string& data, bool binary)>;
+    using on_close_fn_t = std::function<void(int code, std::string reason, bool remote)>;
+    using on_error_fn_t = std::function<void(int code, std::string error)>;
+    using on_recv_fn_t = std::function<void(std::string data, bool binary)>;
 
     WebSocket();
     ~WebSocket();

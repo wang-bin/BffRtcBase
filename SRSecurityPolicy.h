@@ -3,6 +3,7 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+__attribute__((objc_runtime_name("BFF_SRSecurityPolicy")))
 @interface SRSecurityPolicy : NSObject
 
 + (instancetype)defaultPolicy;

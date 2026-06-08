@@ -73,18 +73,18 @@ public:
         websocket.setOnOpen([this]() {
             state_string = "open";
         });
-        websocket.setOnClose([this](int, const std::string&, bool remote) {
+        websocket.setOnClose([this](int, std::string, bool remote) {
             state_string = "closed";
             if (remote && owner) {
                 owner->onReconnect();
             }
         });
-        websocket.setOnError([this](int, const std::string&) {
+        websocket.setOnError([this](int, std::string) {
             if (owner) {
                 owner->onError(RtcError::SignalFailed);
             }
         });
-        websocket.setOnRecv([this](const std::string& data, bool) {
+        websocket.setOnRecv([this](std::string data, bool) {
             auto* response = rtc__signal_response__unpack(
                 nullptr,
                 data.size(),

@@ -29,11 +29,9 @@ typedef NS_ENUM(NSInteger, SRStatusCode) {
 
 @class SRWebSocket;
 
-extern NSString *const SRWebSocketErrorDomain;
-extern NSString *const SRHTTPResponseErrorKey;
-
 @protocol SRWebSocketDelegate;
 
+__attribute__((objc_runtime_name("BFF_SRWebSocket")))
 @interface SRWebSocket : NSObject <NSStreamDelegate>
 
 @property (nonatomic, weak) id <SRWebSocketDelegate> delegate;

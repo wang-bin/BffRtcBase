@@ -89,6 +89,7 @@ public:
 
     // outbound queue for read callback (libcurl >= 8.16)
     std::mutex send_mutex;
+    std::mutex lifecycle_mutex;
     std::deque<SendItem> sendq;
     std::unique_ptr<SendItem> active_send;
 
@@ -99,6 +100,17 @@ public:
 
     bool close_called = false;
     bool local_close_requested = false;
+
+    ~Private() {
+        std::lock_guard<std::mutex> lock(lifecycle_mutex);
+        joinThreadLocked();
+    }
+
+    void joinThreadLocked() {
+        if (thread.joinable()) {
+            thread.join();
+        }
+    }
 
     static int xferinfo_cb(void *clientp,
                            curl_off_t /*dltotal*/, curl_off_t /*dlnow*/,
@@ -186,9 +198,10 @@ public:
 
         if (meta->bytesleft == 0) {
             if (ud->self->on_recv) {
-                ud->self->on_recv(ud->self->rx_buf, ud->self->rx_is_binary);
+                ud->self->on_recv(std::move(ud->self->rx_buf), ud->self->rx_is_binary);
+            } else {
+                ud->self->rx_buf.clear();
             }
-            ud->self->rx_buf.clear();
             ud->self->rx_expected_offset = 0;
         }
 
@@ -341,25 +354,30 @@ public:
     }
 
     void close(int code, const std::string& reason) {
-        if (state.load() == WebSocketReadyState::Closed ||
-            state.load() == WebSocketReadyState::Closing) {
-            return;
-        }
-        state.store(WebSocketReadyState::Closing);
+        std::lock_guard<std::mutex> lock(lifecycle_mutex);
 
-        local_close_requested = true;
-        if (running.load()) {
-            (void)sendCloseFrame(code, reason);
+        const auto current = state.load();
+        if (current != WebSocketReadyState::Closed &&
+            current != WebSocketReadyState::Closing &&
+            thread.joinable()) {
+            state.store(WebSocketReadyState::Closing);
+            local_close_requested = true;
+            abort.store(true);
+            if (auto *e = easy.load(std::memory_order_acquire)) {
+                curl_easy_pause(e, CURLPAUSE_CONT);
+            }
+            if (running.load()) {
+                (void)sendCloseFrame(code, reason);
+            }
+        } else if (thread.joinable()) {
+            // Worker may have already set state to Closed without a join on this side.
+            abort.store(true);
+            if (auto *e = easy.load(std::memory_order_acquire)) {
+                curl_easy_pause(e, CURLPAUSE_CONT);
+            }
         }
-        abort.store(true);
 
-        if (auto *e = easy.load(std::memory_order_acquire)) {
-            curl_easy_pause(e, CURLPAUSE_CONT);
-        }
-
-        if (thread.joinable()) {
-            thread.join();
-        }
+        joinThreadLocked();
 
         {
             std::lock_guard<std::mutex> lock(send_mutex);
@@ -368,7 +386,6 @@ public:
         }
 
         easy.store(nullptr, std::memory_order_release);
-        // If the remote did not already close, report a local close now.
         if (running.exchange(false) && !close_called) {
             fireClose(code, reason, false);
         }

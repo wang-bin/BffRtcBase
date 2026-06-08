@@ -9,8 +9,8 @@
 #include <utility>
 #include <vector>
 
-NSString *const SRWebSocketErrorDomain = @"com.bffmsg.SRWebSocket";
-NSString *const SRHTTPResponseErrorKey = @"HTTPResponseStatusCode";
+static NSString *const SRWebSocketErrorDomain = @"com.bffmsg.SRWebSocket";
+//NSString *const SRHTTPResponseErrorKey = @"HTTPResponseStatusCode";
 
 @interface SRWebSocket ()
 @property (nonatomic, strong, readwrite) NSURL *url;
@@ -153,7 +153,7 @@ static bff::WebSocketOpenOptions OptionsFromRequest(NSURLRequest *request, SRSec
             }
             options.headers.emplace_back(NSStringToStdString(key), NSStringToStdString(value));
             if ([key caseInsensitiveCompare:@"Host"] == NSOrderedSame && value.length) {
-                options.sni_host = NSStringToStdString(value);
+                //options.sni_host = NSStringToStdString(value);
             }
         }
     }
@@ -227,19 +227,21 @@ static bff::WebSocketOpenOptions OptionsFromRequest(NSURLRequest *request, SRSec
         }];
     });
 
-    _ws->setOnRecv([weakSelf](const std::string& data, bool binary) {
+    _ws->setOnRecv([weakSelf](std::string data, bool binary) {
         __strong typeof(weakSelf) strongSelf = weakSelf;
         if (!strongSelf) {
             return;
         }
+        NSData *payload = data.empty()
+            ? [NSData data]
+            : [NSData dataWithBytes:data.data() length:data.size()];
+        NSString *text = binary ? nil : StdStringToNSString(data);
         [strongSelf performDelegate:^{
             id<SRWebSocketDelegate> delegate = strongSelf.delegate;
             if (binary) {
                 if ([delegate respondsToSelector:@selector(webSocket:didReceiveMessageWithData:)]) {
-                    NSData *payload = [NSData dataWithBytes:data.data() length:data.size()];
                     [delegate webSocket:strongSelf didReceiveMessageWithData:payload];
                 } else if ([delegate respondsToSelector:@selector(webSocket:didReceiveMessage:)]) {
-                    NSData *payload = [NSData dataWithBytes:data.data() length:data.size()];
                     [delegate webSocket:strongSelf didReceiveMessage:payload];
                 }
             } else {
@@ -249,25 +251,23 @@ static bff::WebSocketOpenOptions OptionsFromRequest(NSURLRequest *request, SRSec
                 }
                 if (convertToString) {
                     if ([delegate respondsToSelector:@selector(webSocket:didReceiveMessageWithString:)]) {
-                        NSString *text = StdStringToNSString(data);
                         [delegate webSocket:strongSelf didReceiveMessageWithString:text];
                     } else if ([delegate respondsToSelector:@selector(webSocket:didReceiveMessage:)]) {
-                        NSString *text = StdStringToNSString(data);
                         [delegate webSocket:strongSelf didReceiveMessage:text];
                     }
                 } else if ([delegate respondsToSelector:@selector(webSocket:didReceiveMessageWithData:)]) {
-                    NSData *payload = [NSData dataWithBytes:data.data() length:data.size()];
                     [delegate webSocket:strongSelf didReceiveMessageWithData:payload];
                 }
             }
         }];
     });
 
-    _ws->setOnError([weakSelf](int code, const std::string& error) {
+    _ws->setOnError([weakSelf](int code, std::string error) {
         __strong typeof(weakSelf) strongSelf = weakSelf;
         if (!strongSelf) {
             return;
         }
+        NSString *message = StdStringToNSString(error);
         [strongSelf performDelegate:^{
             [strongSelf setReadyState:SR_CLOSED];
             id<SRWebSocketDelegate> delegate = strongSelf.delegate;
@@ -276,7 +276,6 @@ static bff::WebSocketOpenOptions OptionsFromRequest(NSURLRequest *request, SRSec
                 if (code == CURLE_COULDNT_CONNECT || code == CURLE_COULDNT_RESOLVE_HOST) {
                     nsCode = EHOSTDOWN;
                 }
-                NSString *message = StdStringToNSString(error);
                 NSError *err = [NSError errorWithDomain:SRWebSocketErrorDomain
                                                  code:nsCode
                                              userInfo:@{NSLocalizedDescriptionKey: message ?: @"WebSocket error"}];
@@ -285,18 +284,17 @@ static bff::WebSocketOpenOptions OptionsFromRequest(NSURLRequest *request, SRSec
         }];
     });
 
-    _ws->setOnClose([weakSelf](int code, const std::string& reason, bool remote) {
+    _ws->setOnClose([weakSelf](int code, std::string reason, bool remote) {
         __strong typeof(weakSelf) strongSelf = weakSelf;
         if (!strongSelf) {
             return;
         }
+        NSString *reasonText = reason.empty() ? nil : StdStringToNSString(reason);
+        const BOOL wasClean = code == SRStatusCodeNormal || code == SRStatusCodeGoingAway;
         [strongSelf performDelegate:^{
             [strongSelf setReadyState:SR_CLOSED];
             id<SRWebSocketDelegate> delegate = strongSelf.delegate;
             if ([delegate respondsToSelector:@selector(webSocket:didCloseWithCode:reason:wasClean:)]) {
-                NSString *reasonText = reason.empty() ? nil : StdStringToNSString(reason);
-                const BOOL wasClean = code == SRStatusCodeNormal || code == SRStatusCodeGoingAway;
-                (void)remote;
                 [delegate webSocket:strongSelf
                      didCloseWithCode:code
                                reason:reasonText
@@ -420,10 +418,7 @@ static bff::WebSocketOpenOptions OptionsFromRequest(NSURLRequest *request, SRSec
 
 - (void)dealloc
 {
-    if (_ws) {
-        _ws->close();
-        _ws.reset();
-    }
+    _ws.reset();
 }
 
 @end
