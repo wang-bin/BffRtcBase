@@ -4,8 +4,23 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace bff {
+
+enum class WebSocketReadyState {
+    Connecting = 0,
+    Open = 1,
+    Closing = 2,
+    Closed = 3,
+};
+
+struct WebSocketOpenOptions {
+    std::string url;
+    std::vector<std::pair<std::string, std::string>> headers;
+    std::string sni_host;
+};
 
 class WebSocket {
 public:
@@ -33,7 +48,9 @@ remote – Returns whether or not the closing of the connection was initiated by
     void setOnRecv(on_recv_fn_t&& cb);
 
     bool open(const std::string& url);
+    bool open(const WebSocketOpenOptions& options);
     void close();
+    void close(int code, const std::string& reason = {});
 
     bool send(const std::string& data, bool binary) {
         return send(data.data(), data.size(), binary);
@@ -41,6 +58,7 @@ remote – Returns whether or not the closing of the connection was initiated by
     bool send(const void *data, size_t len, bool binary);
 
     bool isRunning() const noexcept;
+    WebSocketReadyState readyState() const noexcept;
     const std::string& lastError() const noexcept;
     int lastErrorCode() const noexcept;
 

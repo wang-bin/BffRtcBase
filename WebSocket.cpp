@@ -8,11 +8,16 @@
 #include <deque>
 #include <mutex>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include <curl/curl.h>
 #include <curl/easy.h>
 #include <curl/websockets.h>
+
+#if __has_include(<openssl/ssl.h>)
+#include <openssl/ssl.h>
+#endif
 
 #include <sys/select.h>
 #include <sys/time.h>
@@ -21,23 +26,30 @@
 namespace bff {
 
 
+struct SslUserData {
+    std::string sni_host;
+};
+
 static CURLcode ssl_ctx_callback(CURL* curl, void* ssl_ctx, void* userdata) {
-    //SSL_CTX_set_cert_verify_callback((SSL_CTX*)ssl_ctx, my_cert_verify_callback, NULL);
     if (!AddCertsToSSL(ssl_ctx))
         return CURLE_ABORTED_BY_CALLBACK;
+#if __has_include(<openssl/ssl.h>)
+    if (userdata) {
+        const auto *ud = static_cast<const SslUserData *>(userdata);
+        if (!ud->sni_host.empty()) {
+            SSL_set_tlsext_host_name(static_cast<SSL *>(ssl_ctx), ud->sni_host.c_str());
+        }
+    }
+#endif
     return CURLE_OK;
 }
 
-static void set_options(CURL* easy, const std::string& sni) {
-    if (!sni.empty()) {
-        //b.Option(CURLOPT_RESOLVE, )
-    } else {
-        //b.Option(CURLOPT_SSL_OPTIONS, CURLSSLOPT_NO_SNI);
-    }
+static void set_options(CURL* easy, const SslUserData& ssl_ud) {
     curl_easy_setopt(easy, CURLOPT_SSL_VERIFYPEER, 1L);
-    curl_easy_setopt(easy, CURLOPT_SSL_VERIFYHOST, 0L); // SSL: no alternative certificate subject name matches target ipv4 address '123.60.148.205'
+    curl_easy_setopt(easy, CURLOPT_SSL_VERIFYHOST, ssl_ud.sni_host.empty() ? 0L : 2L);
     curl_easy_setopt(easy, CURLOPT_VERBOSE, 1L);
     curl_easy_setopt(easy, CURLOPT_SSL_CTX_FUNCTION, ssl_ctx_callback);
+    curl_easy_setopt(easy, CURLOPT_SSL_CTX_DATA, const_cast<SslUserData *>(&ssl_ud));
 }
 
 class WebSocket::Private {
@@ -57,9 +69,12 @@ public:
     std::atomic<bool> abort{false};
     std::atomic<bool> running{false};
     std::atomic<CURL *> easy{nullptr};
+    std::atomic<WebSocketReadyState> state{WebSocketReadyState::Closed};
     std::thread thread;
 
     std::string url;
+    std::vector<std::pair<std::string, std::string>> headers;
+    SslUserData ssl_ud;
     std::string last_error;
     int last_error_code = 0;
 
@@ -302,8 +317,40 @@ public:
         return true;
     }
 
-    void close() {
+    bool sendCloseFrame(int code, const std::string& reason) {
+        auto *e = easy.load(std::memory_order_acquire);
+        if (!e) {
+            return false;
+        }
+
+        unsigned char payload[2 + 123];
+        const int normalized = code >= 1000 ? code : 1000;
+        payload[0] = static_cast<unsigned char>((normalized >> 8) & 0xff);
+        payload[1] = static_cast<unsigned char>(normalized & 0xff);
+        size_t payload_len = 2;
+        if (!reason.empty()) {
+            const size_t max_reason = sizeof(payload) - 2;
+            const size_t n = std::min(reason.size(), max_reason);
+            memcpy(payload + 2, reason.data(), n);
+            payload_len += n;
+        }
+
+        size_t sent = 0;
+        const auto rc = curl_ws_send(e, payload, payload_len, &sent, 0, CURLWS_CLOSE);
+        return rc == CURLE_OK || rc == CURLE_AGAIN;
+    }
+
+    void close(int code, const std::string& reason) {
+        if (state.load() == WebSocketReadyState::Closed ||
+            state.load() == WebSocketReadyState::Closing) {
+            return;
+        }
+        state.store(WebSocketReadyState::Closing);
+
         local_close_requested = true;
+        if (running.load()) {
+            (void)sendCloseFrame(code, reason);
+        }
         abort.store(true);
 
         if (auto *e = easy.load(std::memory_order_acquire)) {
@@ -323,8 +370,9 @@ public:
         easy.store(nullptr, std::memory_order_release);
         // If the remote did not already close, report a local close now.
         if (running.exchange(false) && !close_called) {
-            fireClose(1000, {}, false);
+            fireClose(code, reason, false);
         }
+        state.store(WebSocketReadyState::Closed);
     }
 };
 
@@ -336,18 +384,30 @@ WebSocket::~WebSocket() {
 }
 
 bool WebSocket::open(const std::string& url) {
+    WebSocketOpenOptions options;
+    options.url = url;
+    return open(options);
+}
+
+bool WebSocket::open(const WebSocketOpenOptions& options) {
     close();
 
-    d->url = url;
+    d->url = options.url;
+    d->headers = options.headers;
+    d->ssl_ud.sni_host = options.sni_host;
     d->last_error.clear();
     d->last_error_code = 0;
     d->abort.store(false);
+    d->close_called = false;
+    d->local_close_requested = false;
     d->running.store(true);
+    d->state.store(WebSocketReadyState::Connecting);
 
     d->thread = std::thread([this] {
         CURL *easy = curl_easy_init();
         if (!easy) {
             d->running.store(false);
+            d->state.store(WebSocketReadyState::Closed);
             d->fireError(-1, "curl_easy_init failed");
             return;
         }
@@ -365,13 +425,23 @@ bool WebSocket::open(const std::string& url) {
         curl_easy_setopt(easy, CURLOPT_XFERINFOFUNCTION, &Private::xferinfo_cb);
         curl_easy_setopt(easy, CURLOPT_XFERINFODATA, &ud);
 
-        set_options(easy, {});
+        curl_slist *header_list = nullptr;
+        for (const auto& [key, value] : d->headers) {
+            const auto line = key + ": " + value;
+            header_list = curl_slist_append(header_list, line.c_str());
+        }
+        if (header_list) {
+            curl_easy_setopt(easy, CURLOPT_HTTPHEADER, header_list);
+        }
+
+        set_options(easy, d->ssl_ud);
 
         d->easy.store(easy, std::memory_order_release);
 
         if (d->on_open) {
             d->on_open();
         }
+        d->state.store(WebSocketReadyState::Open);
 
         const auto rc = curl_easy_perform(easy);
 
@@ -384,10 +454,14 @@ bool WebSocket::open(const std::string& url) {
 
         // Ensure a close callback is always emitted.
         if (!d->close_called) {
-            const bool remote = !d->abort.load();
+            const bool remote = !d->local_close_requested;
             d->fireClose(1000, {}, remote);
         }
+        d->state.store(WebSocketReadyState::Closed);
 
+        if (header_list) {
+            curl_slist_free_all(header_list);
+        }
         curl_easy_cleanup(easy);
     });
 
@@ -395,8 +469,12 @@ bool WebSocket::open(const std::string& url) {
 }
 
 void WebSocket::close() {
+    close(1000, {});
+}
+
+void WebSocket::close(int code, const std::string& reason) {
     if (d) {
-        d->close();
+        d->close(code, reason);
     }
 }
 
@@ -435,6 +513,10 @@ void WebSocket::setOnRecv(on_recv_fn_t&& cb) { d->on_recv = std::move(cb); }
 
 bool WebSocket::isRunning() const noexcept {
     return d->running.load();
+}
+
+WebSocketReadyState WebSocket::readyState() const noexcept {
+    return d->state.load();
 }
 
 const std::string& WebSocket::lastError() const noexcept {
