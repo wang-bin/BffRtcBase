@@ -13,18 +13,66 @@
 
 #include <curl/curl.h>
 #include <curl/easy.h>
+#include <curl/multi.h>
 #include <curl/websockets.h>
 
 #if __has_include(<openssl/ssl.h>)
 #include <openssl/ssl.h>
 #endif
 
-#include <sys/select.h>
-#include <sys/time.h>
+#include <fcntl.h>
 #include <unistd.h>
 
 namespace bff {
 
+class WakePipe {
+public:
+    WakePipe() {
+        if (pipe(pipefd_) != 0) {
+            pipefd_[0] = pipefd_[1] = -1;
+            return;
+        }
+        for (int fd : pipefd_) {
+            const int flags = fcntl(fd, F_GETFL, 0);
+            if (flags >= 0) {
+                fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+            }
+        }
+    }
+
+    ~WakePipe() {
+        if (pipefd_[0] >= 0) {
+            close(pipefd_[0]);
+        }
+        if (pipefd_[1] >= 0) {
+            close(pipefd_[1]);
+        }
+    }
+
+    bool valid() const { return pipefd_[0] >= 0 && pipefd_[1] >= 0; }
+
+    int readFd() const { return pipefd_[0]; }
+
+    void signal() const {
+        if (pipefd_[1] < 0) {
+            return;
+        }
+        const char byte = 0;
+        (void)write(pipefd_[1], &byte, 1);
+    }
+
+    void drain() const {
+        if (pipefd_[0] < 0) {
+            return;
+        }
+        char buf[64];
+        while (read(pipefd_[0], buf, sizeof(buf)) > 0) {
+        }
+    }
+
+private:
+    int pipefd_[2] = {-1, -1};
+};
 
 struct SslUserData {
     std::string sni_host;
@@ -47,6 +95,7 @@ static CURLcode ssl_ctx_callback(CURL* curl, void* ssl_ctx, void* userdata) {
 static void set_options(CURL* easy, const SslUserData& ssl_ud) {
     curl_easy_setopt(easy, CURLOPT_SSL_VERIFYPEER, 1L);
     curl_easy_setopt(easy, CURLOPT_SSL_VERIFYHOST, ssl_ud.sni_host.empty() ? 0L : 2L);
+    curl_easy_setopt(easy, CURLOPT_TCP_NODELAY, 1L);
     curl_easy_setopt(easy, CURLOPT_VERBOSE, 1L);
     curl_easy_setopt(easy, CURLOPT_SSL_CTX_FUNCTION, ssl_ctx_callback);
     curl_easy_setopt(easy, CURLOPT_SSL_CTX_DATA, const_cast<SslUserData *>(&ssl_ud));
@@ -57,8 +106,7 @@ public:
     struct SendItem {
         std::vector<char> payload;
         bool binary = false;
-        size_t offset = 0;
-        bool frame_started = false;
+        bool close_frame = false;
     };
 
     struct UserData {
@@ -69,6 +117,7 @@ public:
     std::atomic<bool> abort{false};
     std::atomic<bool> running{false};
     std::atomic<CURL *> easy{nullptr};
+    std::atomic<CURLM *> multi{nullptr};
     std::atomic<WebSocketReadyState> state{WebSocketReadyState::Closed};
     std::thread thread;
 
@@ -91,7 +140,7 @@ public:
     std::mutex send_mutex;
     std::mutex lifecycle_mutex;
     std::deque<SendItem> sendq;
-    std::unique_ptr<SendItem> active_send;
+    WakePipe wake_pipe;
 
     on_open_fn_t on_open;
     on_close_fn_t on_close;
@@ -100,6 +149,19 @@ public:
 
     bool close_called = false;
     bool local_close_requested = false;
+    std::atomic<bool> open_notified{false};
+    std::atomic<bool> error_reported{false};
+
+    void notifyOpen() {
+        bool expected = false;
+        if (!open_notified.compare_exchange_strong(expected, true)) {
+            return;
+        }
+        state.store(WebSocketReadyState::Open);
+        if (on_open) {
+            on_open();
+        }
+    }
 
     ~Private() {
         std::lock_guard<std::mutex> lock(lifecycle_mutex);
@@ -112,12 +174,28 @@ public:
         }
     }
 
+    void wakeWorker() {
+        wake_pipe.signal();
+#if LIBCURL_VERSION_NUM >= 0x074400
+        if (auto *m = multi.load(std::memory_order_acquire)) {
+            curl_multi_wakeup(m);
+        }
+#endif
+        if (auto *e = easy.load(std::memory_order_acquire)) {
+            curl_easy_pause(e, CURLPAUSE_CONT);
+        }
+    }
+
     static int xferinfo_cb(void *clientp,
                            curl_off_t /*dltotal*/, curl_off_t /*dlnow*/,
                            curl_off_t /*ultotal*/, curl_off_t /*ulnow*/) {
         auto *ud = reinterpret_cast<UserData *>(clientp);
         if (!ud || !ud->self) {
             return 0;
+        }
+        if (ud->easy) {
+            ud->self->notifyOpen();
+            ud->self->flushSendQueue(ud->easy);
         }
         return ud->self->abort.load() ? 1 : 0;
     }
@@ -137,6 +215,8 @@ public:
         if (!meta) {
             return bytes;
         }
+
+        ud->self->notifyOpen();
 
         // ignore ping/pong here (autopong by default)
         if ((meta->flags & CURLWS_PING) || (meta->flags & CURLWS_PONG)) {
@@ -171,7 +251,7 @@ public:
                     }
                 }
                 ud->self->fireClose(code, reason, true);
-                ud->self->abort.store(true); // stop curl_easy_perform promptly
+                ud->self->abort.store(true);
                 ud->self->close_buf.clear();
                 ud->self->close_expected_offset = 0;
             }
@@ -205,72 +285,15 @@ public:
             ud->self->rx_expected_offset = 0;
         }
 
+        ud->self->flushSendQueue(ud->easy);
         return bytes;
     }
 
-    static size_t read_cb(char *buffer, size_t size, size_t nitems, void *userdata) {
-        const auto cap = size * nitems;
-        if (!userdata || !buffer || !cap) {
-            return 0;
-        }
-
-        auto *ud = reinterpret_cast<UserData *>(userdata);
-        if (!ud || !ud->self || !ud->easy) {
-            return 0;
-        }
-
-        if (ud->self->abort.load()) {
-            return CURL_READFUNC_ABORT;
-        }
-
-#if LIBCURL_VERSION_NUM < 0x081000
-        return CURL_READFUNC_PAUSE;
-#else
-        SendItem *item = nullptr;
-        {
-            std::lock_guard<std::mutex> lock(ud->self->send_mutex);
-            if (!ud->self->active_send && !ud->self->sendq.empty()) {
-                ud->self->active_send = std::make_unique<SendItem>(std::move(ud->self->sendq.front()));
-                ud->self->sendq.pop_front();
-            }
-            item = ud->self->active_send.get();
-        }
-
-        if (!item) {
-            return CURL_READFUNC_PAUSE;
-        }
-
-        if (!item->frame_started) {
-            const unsigned int flags = item->binary ? CURLWS_BINARY : CURLWS_TEXT;
-            const auto frame_len = static_cast<curl_off_t>(item->payload.size());
-            const auto rc = curl_ws_start_frame(ud->easy, flags, frame_len);
-            if (rc != CURLE_OK) {
-                return CURL_READFUNC_ABORT;
-            }
-            item->frame_started = true;
-        }
-
-        const auto left = item->payload.size() - item->offset;
-        if (left == 0) {
-            std::lock_guard<std::mutex> lock(ud->self->send_mutex);
-            ud->self->active_send.reset();
-            return 0;
-        }
-
-        const auto n = std::min(cap, left);
-        memcpy(buffer, item->payload.data() + item->offset, n);
-        item->offset += n;
-
-        if (item->offset >= item->payload.size()) {
-            std::lock_guard<std::mutex> lock(ud->self->send_mutex);
-            ud->self->active_send.reset();
-        }
-
-        return n;
-#endif
-    }
-
     void fireError(const int code, const std::string& err) {
+        bool expected = false;
+        if (!error_reported.compare_exchange_strong(expected, true)) {
+            return;
+        }
         last_error_code = code;
         last_error = err;
         if (on_error) {
@@ -288,54 +311,69 @@ public:
         }
     }
 
-    bool sendDirect(const void *data, size_t len, bool binary) {
-        auto *e = easy.load(std::memory_order_acquire);
+    // Returns true when the item is fully sent. On false, *fatal indicates whether
+    // the connection should be torn down; transient send failures are retried.
+    bool sendDirect(CURL *e, SendItem& item, bool& fatal) {
+        fatal = false;
         if (!e) {
             return false;
         }
 
-        const unsigned int flags = binary ? CURLWS_BINARY : CURLWS_TEXT;
-        const unsigned char *p = reinterpret_cast<const unsigned char *>(data);
-        size_t offset = 0;
+        const unsigned int flags = item.close_frame
+            ? CURLWS_CLOSE
+            : (item.binary ? CURLWS_BINARY : CURLWS_TEXT);
 
-        while (offset < len) {
+        while (!item.payload.empty()) {
             size_t sent = 0;
-            const auto rc = curl_ws_send(e, p + offset, len - offset, &sent, 0, flags);
-            offset += sent;
+            const auto rc = curl_ws_send(e, item.payload.data(), item.payload.size(), &sent, 0, flags);
+            if (sent > 0) {
+                item.payload.erase(item.payload.begin(),
+                                   item.payload.begin() + static_cast<std::ptrdiff_t>(sent));
+            }
 
             if (rc == CURLE_OK) {
                 continue;
             }
-            if (rc == CURLE_AGAIN) {
-                curl_socket_t sockfd = CURL_SOCKET_BAD;
-                curl_easy_getinfo(e, CURLINFO_ACTIVESOCKET, &sockfd);
-                if (sockfd == CURL_SOCKET_BAD) {
-                    return false;
-                }
-
-                fd_set wfds;
-                FD_ZERO(&wfds);
-                FD_SET(sockfd, &wfds);
-                struct timeval tv;
-                tv.tv_sec = 1;
-                tv.tv_usec = 0;
-                (void)select(static_cast<int>(sockfd + 1), nullptr, &wfds, nullptr, &tv);
-                continue;
+            if (rc == CURLE_AGAIN || rc == CURLE_SEND_ERROR) {
+                return false;
             }
 
             fireError(static_cast<int>(rc), curl_easy_strerror(rc));
+            fatal = true;
             return false;
         }
 
         return true;
     }
 
-    bool sendCloseFrame(int code, const std::string& reason) {
-        auto *e = easy.load(std::memory_order_acquire);
-        if (!e) {
-            return false;
+    void flushSendQueue(CURL *e) {
+        if (!e || !open_notified.load(std::memory_order_acquire)) {
+            return;
         }
+        while (true) {
+            SendItem item;
+            {
+                std::lock_guard<std::mutex> lock(send_mutex);
+                if (sendq.empty()) {
+                    break;
+                }
+                item = std::move(sendq.front());
+                sendq.pop_front();
+            }
+            bool fatal = false;
+            if (!sendDirect(e, item, fatal)) {
+                std::lock_guard<std::mutex> lock(send_mutex);
+                sendq.push_front(std::move(item));
+                if (fatal) {
+                    abort.store(true);
+                }
+                wakeWorker();
+                break;
+            }
+        }
+    }
 
+    void queueCloseFrame(int code, const std::string& reason) {
         unsigned char payload[2 + 123];
         const int normalized = code >= 1000 ? code : 1000;
         payload[0] = static_cast<unsigned char>((normalized >> 8) & 0xff);
@@ -348,9 +386,12 @@ public:
             payload_len += n;
         }
 
-        size_t sent = 0;
-        const auto rc = curl_ws_send(e, payload, payload_len, &sent, 0, CURLWS_CLOSE);
-        return rc == CURLE_OK || rc == CURLE_AGAIN;
+        SendItem item;
+        item.close_frame = true;
+        item.payload.assign(reinterpret_cast<char *>(payload),
+                            reinterpret_cast<char *>(payload) + payload_len);
+        std::lock_guard<std::mutex> lock(send_mutex);
+        sendq.push_back(std::move(item));
     }
 
     void close(int code, const std::string& reason) {
@@ -362,19 +403,16 @@ public:
             thread.joinable()) {
             state.store(WebSocketReadyState::Closing);
             local_close_requested = true;
-            abort.store(true);
-            if (auto *e = easy.load(std::memory_order_acquire)) {
-                curl_easy_pause(e, CURLPAUSE_CONT);
-            }
             if (running.load()) {
-                (void)sendCloseFrame(code, reason);
+                queueCloseFrame(code, reason);
             }
+            wakeWorker();
+            abort.store(true);
+            wakeWorker();
         } else if (thread.joinable()) {
             // Worker may have already set state to Closed without a join on this side.
             abort.store(true);
-            if (auto *e = easy.load(std::memory_order_acquire)) {
-                curl_easy_pause(e, CURLPAUSE_CONT);
-            }
+            wakeWorker();
         }
 
         joinThreadLocked();
@@ -382,7 +420,6 @@ public:
         {
             std::lock_guard<std::mutex> lock(send_mutex);
             sendq.clear();
-            active_send.reset();
         }
 
         easy.store(nullptr, std::memory_order_release);
@@ -417,6 +454,8 @@ bool WebSocket::open(const WebSocketOpenOptions& options) {
     d->abort.store(false);
     d->close_called = false;
     d->local_close_requested = false;
+    d->open_notified.store(false);
+    d->error_reported.store(false);
     d->running.store(true);
     d->state.store(WebSocketReadyState::Connecting);
 
@@ -434,9 +473,6 @@ bool WebSocket::open(const WebSocketOpenOptions& options) {
         curl_easy_setopt(easy, CURLOPT_URL, d->url.c_str());
         curl_easy_setopt(easy, CURLOPT_WRITEFUNCTION, &Private::write_cb);
         curl_easy_setopt(easy, CURLOPT_WRITEDATA, &ud);
-        curl_easy_setopt(easy, CURLOPT_READFUNCTION, &Private::read_cb);
-        curl_easy_setopt(easy, CURLOPT_READDATA, &ud);
-        curl_easy_setopt(easy, CURLOPT_UPLOAD, 1L);
 
         curl_easy_setopt(easy, CURLOPT_NOPROGRESS, 0L);
         curl_easy_setopt(easy, CURLOPT_XFERINFOFUNCTION, &Private::xferinfo_cb);
@@ -455,12 +491,98 @@ bool WebSocket::open(const WebSocketOpenOptions& options) {
 
         d->easy.store(easy, std::memory_order_release);
 
-        if (d->on_open) {
-            d->on_open();
+        CURLM *multi = curl_multi_init();
+        if (!multi) {
+            d->running.store(false);
+            d->state.store(WebSocketReadyState::Closed);
+            d->easy.store(nullptr, std::memory_order_release);
+            d->fireError(-1, "curl_multi_init failed");
+            curl_easy_cleanup(easy);
+            if (header_list) {
+                curl_slist_free_all(header_list);
+            }
+            return;
         }
-        d->state.store(WebSocketReadyState::Open);
+        d->multi.store(multi, std::memory_order_release);
 
-        const auto rc = curl_easy_perform(easy);
+        CURLMcode mc = curl_multi_add_handle(multi, easy);
+        if (mc != CURLM_OK) {
+            d->multi.store(nullptr, std::memory_order_release);
+            curl_multi_cleanup(multi);
+            d->running.store(false);
+            d->state.store(WebSocketReadyState::Closed);
+            d->easy.store(nullptr, std::memory_order_release);
+            d->fireError(static_cast<int>(mc), curl_multi_strerror(mc));
+            curl_easy_cleanup(easy);
+            if (header_list) {
+                curl_slist_free_all(header_list);
+            }
+            return;
+        }
+
+        CURLcode rc = CURLE_OK;
+        int still_running = 1;
+        while (!d->abort.load() && still_running) {
+            mc = curl_multi_perform(multi, &still_running);
+            if (mc != CURLM_OK) {
+                d->fireError(static_cast<int>(mc), curl_multi_strerror(mc));
+                break;
+            }
+
+            d->flushSendQueue(easy);
+
+            int msgs_left = 0;
+            while (CURLMsg *msg = curl_multi_info_read(multi, &msgs_left)) {
+                if (msg->msg == CURLMSG_DONE && msg->easy_handle == easy) {
+                    rc = msg->data.result;
+                    still_running = 0;
+                    break;
+                }
+            }
+
+            if (!still_running || d->abort.load()) {
+                break;
+            }
+
+            long timeout_ms = 1000;
+            curl_multi_timeout(multi, &timeout_ms);
+            if (timeout_ms < 0) {
+                timeout_ms = 100;
+            }
+            bool pending_send = false;
+            {
+                std::lock_guard<std::mutex> lock(d->send_mutex);
+                pending_send = !d->sendq.empty();
+                if (pending_send) {
+                    timeout_ms = 0;
+                }
+            }
+
+            struct curl_waitfd extra {};
+            const bool use_wake_pipe = d->wake_pipe.valid();
+            if (use_wake_pipe) {
+                extra.fd = d->wake_pipe.readFd();
+                extra.events = CURL_WAIT_POLLIN;
+            }
+
+            int numfds = 0;
+            mc = curl_multi_poll(multi, use_wake_pipe ? &extra : nullptr,
+                                 use_wake_pipe ? 1u : 0u, timeout_ms, &numfds);
+            if (mc != CURLM_OK) {
+                d->fireError(static_cast<int>(mc), curl_multi_strerror(mc));
+                break;
+            }
+            if (use_wake_pipe && (extra.revents & CURL_WAIT_POLLIN)) {
+                d->wake_pipe.drain();
+                d->flushSendQueue(easy);
+            }
+        }
+
+        d->flushSendQueue(easy);
+
+        curl_multi_remove_handle(multi, easy);
+        d->multi.store(nullptr, std::memory_order_release);
+        curl_multi_cleanup(multi);
 
         d->easy.store(nullptr, std::memory_order_release);
         d->running.store(false);
@@ -503,9 +625,6 @@ bool WebSocket::send(const void *data, size_t len, bool binary) {
         return false;
     }
 
-#if LIBCURL_VERSION_NUM < 0x081000
-    return d->sendDirect(data, len, binary);
-#else
     {
         std::lock_guard<std::mutex> lock(d->send_mutex);
         Private::SendItem item;
@@ -515,12 +634,8 @@ bool WebSocket::send(const void *data, size_t len, bool binary) {
         d->sendq.push_back(std::move(item));
     }
 
-    if (auto *easy = d->easy.load(std::memory_order_acquire)) {
-        curl_easy_pause(easy, CURLPAUSE_CONT);
-    }
-
+    d->wakeWorker();
     return true;
-#endif
 }
 
 void WebSocket::setOnOpen(on_open_fn_t&& cb) { d->on_open = std::move(cb); }
