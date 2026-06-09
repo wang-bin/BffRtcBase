@@ -294,6 +294,8 @@ public:
         if (!error_reported.compare_exchange_strong(expected, true)) {
             return;
         }
+        // SRWebSocket: didFailWithError and didCloseWithCode are mutually exclusive.
+        close_called = true;
         last_error_code = code;
         last_error = err;
         if (on_error) {
@@ -302,7 +304,7 @@ public:
     }
 
     void fireClose(int code, const std::string& reason, bool remote) {
-        if (close_called) {
+        if (close_called || error_reported.load(std::memory_order_acquire)) {
             return;
         }
         close_called = true;
@@ -397,12 +399,12 @@ public:
     void close(int code, const std::string& reason) {
         std::lock_guard<std::mutex> lock(lifecycle_mutex);
 
+        local_close_requested = true;
         const auto current = state.load();
         if (current != WebSocketReadyState::Closed &&
             current != WebSocketReadyState::Closing &&
             thread.joinable()) {
             state.store(WebSocketReadyState::Closing);
-            local_close_requested = true;
             if (running.load()) {
                 queueCloseFrame(code, reason);
             }
@@ -423,7 +425,9 @@ public:
         }
 
         easy.store(nullptr, std::memory_order_release);
-        if (running.exchange(false) && !close_called) {
+        running.store(false);
+        // Worker clears running before join returns; local close must still deliver on_close.
+        if (!close_called && !error_reported.load(std::memory_order_acquire)) {
             fireClose(code, reason, false);
         }
         state.store(WebSocketReadyState::Closed);
@@ -444,8 +448,6 @@ bool WebSocket::open(const std::string& url) {
 }
 
 bool WebSocket::open(const WebSocketOpenOptions& options) {
-    close();
-
     d->url = options.url;
     d->headers = options.headers;
     d->ssl_ud.sni_host = options.sni_host;
@@ -589,12 +591,9 @@ bool WebSocket::open(const WebSocketOpenOptions& options) {
 
         if (!d->abort.load() && rc != CURLE_OK) {
             d->fireError(static_cast<int>(rc), curl_easy_strerror(rc));
-        }
-
-        // Ensure a close callback is always emitted.
-        if (!d->close_called) {
-            const bool remote = !d->local_close_requested;
-            d->fireClose(1000, {}, remote);
+        } else if (!d->close_called && !d->error_reported.load() && !d->local_close_requested) {
+            // Peer closed without a WS CLOSE frame; local close is reported by close().
+            d->fireClose(1000, {}, true);
         }
         d->state.store(WebSocketReadyState::Closed);
 
