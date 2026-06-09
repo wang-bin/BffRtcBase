@@ -1,4 +1,4 @@
-#import "SRWebSocket.h"
+#import "SRWebSocketCurl.h"
 
 #include "WebSocket.h"
 
@@ -9,21 +9,23 @@
 #include <utility>
 #include <vector>
 
-static NSString *const SRWebSocketErrorDomain = @"com.bffmsg.SRWebSocket";
-//NSString *const SRHTTPResponseErrorKey = @"HTTPResponseStatusCode";
+/// Error domain used by this curl-based implementation.
+/// Distinct from the pod's SRWebSocketErrorDomain to avoid confusion with stream-level errors.
+static NSString *const SRWebSocketCurlErrorDomain = @"com.bffmsg.SRWebSocketCurl";
 
-@interface SRWebSocket ()
-@property (nonatomic, strong, readwrite) NSURL *url;
-@property (nonatomic, copy) NSArray<NSString *> *protocols;
-@property (nonatomic, strong, nullable) SRSecurityPolicy *securityPolicy;
-@property (nonatomic, strong) NSURLRequest *request;
-@property (nonatomic, assign) BOOL opened;
+@interface SRWebSocketCurl ()
+@property (nonatomic, strong) NSURLRequest *curl_request;
+@property (nonatomic, copy, nullable) NSArray<NSString *> *curl_protocols;
+@property (nonatomic, strong, nullable) SRSecurityPolicy *curl_securityPolicy;
+@property (nonatomic, assign) BOOL curl_opened;
 @end
 
-@implementation SRWebSocket {
+@implementation SRWebSocketCurl {
     std::unique_ptr<bff::WebSocket> _ws;
-    SRReadyState _readyState;
+    SRReadyState _curl_readyState;
 }
+
+#pragma mark - Initializers
 
 - (instancetype)initWithURLRequest:(NSURLRequest *)request
 {
@@ -48,15 +50,14 @@ static NSString *const SRWebSocketErrorDomain = @"com.bffmsg.SRWebSocket";
 
 - (instancetype)initWithURLRequest:(NSURLRequest *)request protocols:(NSArray<NSString *> *)protocols securityPolicy:(SRSecurityPolicy *)securityPolicy
 {
-    self = [super init];
+    self = [super initWithURLRequest:request protocols:protocols securityPolicy:securityPolicy];
     if (!self) {
         return nil;
     }
-    _request = [request copy];
-    _url = request.URL;
-    _protocols = [protocols copy];
-    _securityPolicy = securityPolicy;
-    _readyState = SR_CONNECTING;
+    _curl_request = [request copy];
+    _curl_protocols = [protocols copy];
+    _curl_securityPolicy = securityPolicy;
+    _curl_readyState = SR_CONNECTING;
     _ws = std::make_unique<bff::WebSocket>();
     return self;
 }
@@ -88,9 +89,11 @@ static NSString *const SRWebSocketErrorDomain = @"com.bffmsg.SRWebSocket";
     return [self initWithURLRequest:request protocols:protocols securityPolicy:securityPolicy];
 }
 
+#pragma mark - Property overrides
+
 - (SRReadyState)readyState
 {
-    return _readyState;
+    return _curl_readyState;
 }
 
 - (CFHTTPMessageRef)receivedHTTPHeaders
@@ -108,6 +111,8 @@ static NSString *const SRWebSocketErrorDomain = @"com.bffmsg.SRWebSocket";
     return NO;
 }
 
+#pragma mark - RunLoop scheduling (no-ops — curl manages its own event loop)
+
 - (void)scheduleInRunLoop:(NSRunLoop *)runLoop forMode:(NSString *)mode
 {
     (void)runLoop;
@@ -120,6 +125,8 @@ static NSString *const SRWebSocketErrorDomain = @"com.bffmsg.SRWebSocket";
     (void)mode;
 }
 
+#pragma mark - Helpers
+
 static std::string NSStringToStdString(NSString *string)
 {
     if (!string.length) {
@@ -128,7 +135,7 @@ static std::string NSStringToStdString(NSString *string)
     return std::string(string.UTF8String);
 }
 
-static NSString *StdStringToNSString(const std::string& value)
+static NSString *StdStringToNSString(const std::string &value)
 {
     if (value.empty()) {
         return @"";
@@ -145,7 +152,6 @@ static bff::WebSocketOpenOptions OptionsFromRequest(NSURLRequest *request, SRSec
 
     BOOL sni = YES;
     if (securityPolicy && [securityPolicy respondsToSelector:@selector(valueForKey:)]) {
-        // check if key "sni" exists and is a boolean
         if ([securityPolicy respondsToSelector:NSSelectorFromString(@"sni")]) {
             if (id v = [securityPolicy valueForKey:@"sni"]) {
                 if ([v isKindOfClass:[NSNumber class]]) {
@@ -197,9 +203,9 @@ static bff::WebSocketOpenOptions OptionsFromRequest(NSURLRequest *request, SRSec
     dispatch_async(queue, block);
 }
 
-- (void)setReadyState:(SRReadyState)readyState
+- (void)setCurlReadyState:(SRReadyState)readyState
 {
-    _readyState = readyState;
+    _curl_readyState = readyState;
 }
 
 - (NSError *)errorFromWebSocket
@@ -215,18 +221,20 @@ static bff::WebSocketOpenOptions OptionsFromRequest(NSURLRequest *request, SRSec
         nsCode = EHOSTDOWN;
     }
 
-    return [NSError errorWithDomain:SRWebSocketErrorDomain
+    return [NSError errorWithDomain:SRWebSocketCurlErrorDomain
                                code:nsCode
                            userInfo:@{NSLocalizedDescriptionKey: message}];
 }
 
+#pragma mark - Open / Close
+
 - (void)open
 {
-    if (self.opened) {
+    if (self.curl_opened) {
         return;
     }
-    self.opened = YES;
-    [self setReadyState:SR_CONNECTING];
+    self.curl_opened = YES;
+    [self setCurlReadyState:SR_CONNECTING];
 
     __weak typeof(self) weakSelf = self;
     _ws->setOnOpen([weakSelf]() {
@@ -235,7 +243,7 @@ static bff::WebSocketOpenOptions OptionsFromRequest(NSURLRequest *request, SRSec
             return;
         }
         [strongSelf performDelegate:^{
-            [strongSelf setReadyState:SR_OPEN];
+            [strongSelf setCurlReadyState:SR_OPEN];
             id<SRWebSocketDelegate> delegate = strongSelf.delegate;
             if ([delegate respondsToSelector:@selector(webSocketDidOpen:)]) {
                 [delegate webSocketDidOpen:strongSelf];
@@ -285,16 +293,16 @@ static bff::WebSocketOpenOptions OptionsFromRequest(NSURLRequest *request, SRSec
         }
         NSString *message = StdStringToNSString(error);
         [strongSelf performDelegate:^{
-            [strongSelf setReadyState:SR_CLOSED];
+            [strongSelf setCurlReadyState:SR_CLOSED];
             id<SRWebSocketDelegate> delegate = strongSelf.delegate;
             if ([delegate respondsToSelector:@selector(webSocket:didFailWithError:)]) {
                 NSInteger nsCode = code;
                 if (code == CURLE_COULDNT_CONNECT || code == CURLE_COULDNT_RESOLVE_HOST) {
                     nsCode = EHOSTDOWN;
                 }
-                NSError *err = [NSError errorWithDomain:SRWebSocketErrorDomain
-                                                 code:nsCode
-                                             userInfo:@{NSLocalizedDescriptionKey: message ?: @"WebSocket error"}];
+                NSError *err = [NSError errorWithDomain:SRWebSocketCurlErrorDomain
+                                                   code:nsCode
+                                               userInfo:@{NSLocalizedDescriptionKey: message ?: @"WebSocket error"}];
                 [delegate webSocket:strongSelf didFailWithError:err];
             }
         }];
@@ -308,7 +316,7 @@ static bff::WebSocketOpenOptions OptionsFromRequest(NSURLRequest *request, SRSec
         NSString *reasonText = reason.empty() ? nil : StdStringToNSString(reason);
         const BOOL wasClean = code == SRStatusCodeNormal || code == SRStatusCodeGoingAway;
         [strongSelf performDelegate:^{
-            [strongSelf setReadyState:SR_CLOSED];
+            [strongSelf setCurlReadyState:SR_CLOSED];
             id<SRWebSocketDelegate> delegate = strongSelf.delegate;
             if ([delegate respondsToSelector:@selector(webSocket:didCloseWithCode:reason:wasClean:)]) {
                 [delegate webSocket:strongSelf
@@ -319,9 +327,9 @@ static bff::WebSocketOpenOptions OptionsFromRequest(NSURLRequest *request, SRSec
         }];
     });
 
-    const auto options = OptionsFromRequest(self.request, self.securityPolicy);
+    const auto options = OptionsFromRequest(self.curl_request, self.curl_securityPolicy);
     if (!_ws->open(options)) {
-        [self setReadyState:SR_CLOSED];
+        [self setCurlReadyState:SR_CLOSED];
         id<SRWebSocketDelegate> delegate = self.delegate;
         if ([delegate respondsToSelector:@selector(webSocket:didFailWithError:)]) {
             [delegate webSocket:self didFailWithError:[self errorFromWebSocket]];
@@ -336,14 +344,16 @@ static bff::WebSocketOpenOptions OptionsFromRequest(NSURLRequest *request, SRSec
 
 - (void)closeWithCode:(NSInteger)code reason:(NSString *)reason
 {
-    if (_readyState == SR_CLOSED || _readyState == SR_CLOSING) {
+    if (_curl_readyState == SR_CLOSED || _curl_readyState == SR_CLOSING) {
         return;
     }
-    [self setReadyState:SR_CLOSING];
+    [self setCurlReadyState:SR_CLOSING];
     if (_ws) {
         _ws->close(static_cast<int>(code), NSStringToStdString(reason));
     }
 }
+
+#pragma mark - Send
 
 - (void)send:(id)message
 {
@@ -360,15 +370,15 @@ static bff::WebSocketOpenOptions OptionsFromRequest(NSURLRequest *request, SRSec
 {
     if (!string) {
         if (error) {
-            *error = [NSError errorWithDomain:SRWebSocketErrorDomain
+            *error = [NSError errorWithDomain:SRWebSocketCurlErrorDomain
                                          code:0
                                      userInfo:@{NSLocalizedDescriptionKey: @"message is nil"}];
         }
         return NO;
     }
-    if (_readyState != SR_OPEN) {
+    if (_curl_readyState != SR_OPEN) {
         if (error) {
-            *error = [NSError errorWithDomain:SRWebSocketErrorDomain
+            *error = [NSError errorWithDomain:SRWebSocketCurlErrorDomain
                                          code:57
                                      userInfo:@{NSLocalizedDescriptionKey: @"Socket is not connected"}];
         }
@@ -398,15 +408,15 @@ static bff::WebSocketOpenOptions OptionsFromRequest(NSURLRequest *request, SRSec
 {
     if (!data) {
         if (error) {
-            *error = [NSError errorWithDomain:SRWebSocketErrorDomain
+            *error = [NSError errorWithDomain:SRWebSocketCurlErrorDomain
                                          code:0
                                      userInfo:@{NSLocalizedDescriptionKey: @"data is nil"}];
         }
         return NO;
     }
-    if (_readyState != SR_OPEN) {
+    if (_curl_readyState != SR_OPEN) {
         if (error) {
-            *error = [NSError errorWithDomain:SRWebSocketErrorDomain
+            *error = [NSError errorWithDomain:SRWebSocketCurlErrorDomain
                                          code:57
                                      userInfo:@{NSLocalizedDescriptionKey: @"Socket is not connected"}];
         }
@@ -425,12 +435,14 @@ static bff::WebSocketOpenOptions OptionsFromRequest(NSURLRequest *request, SRSec
 {
     (void)data;
     if (error) {
-        *error = [NSError errorWithDomain:SRWebSocketErrorDomain
+        *error = [NSError errorWithDomain:SRWebSocketCurlErrorDomain
                                      code:0
                                  userInfo:@{NSLocalizedDescriptionKey: @"sendPing is not supported"}];
     }
     return NO;
 }
+
+#pragma mark - Dealloc
 
 - (void)dealloc
 {
