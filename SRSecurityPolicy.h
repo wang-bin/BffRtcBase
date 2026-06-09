@@ -3,6 +3,7 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+// sni can be disabled by setting the property "sni" to NO, enabled by default and use property "host"
 __attribute__((objc_runtime_name("BFF_SRSecurityPolicy")))
 @interface SRSecurityPolicy : NSObject
 

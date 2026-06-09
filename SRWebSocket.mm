@@ -143,25 +143,41 @@ static bff::WebSocketOpenOptions OptionsFromRequest(NSURLRequest *request, SRSec
     bff::WebSocketOpenOptions options;
     options.url = NSStringToStdString(request.URL.absoluteString);
 
-    NSDictionary<NSString *, NSString *> *headers = request.allHTTPHeaderFields;
-    if (headers.count) {
-        options.headers.reserve(headers.count);
-        for (NSString *key in headers) {
-            NSString *value = headers[key];
-            if (!value) {
-                continue;
+    BOOL sni = YES;
+    if (securityPolicy && [securityPolicy respondsToSelector:@selector(valueForKey:)]) {
+        // check if key "sni" exists and is a boolean
+        if ([securityPolicy respondsToSelector:NSSelectorFromString(@"sni")]) {
+            if (id v = [securityPolicy valueForKey:@"sni"]) {
+                if ([v isKindOfClass:[NSNumber class]]) {
+                    sni = [v boolValue];
+                }
             }
-            options.headers.emplace_back(NSStringToStdString(key), NSStringToStdString(value));
-            if ([key caseInsensitiveCompare:@"Host"] == NSOrderedSame && value.length) {
-                //options.sni_host = NSStringToStdString(value);
+        }
+        if (sni) {
+            if ([securityPolicy respondsToSelector:NSSelectorFromString(@"host")]) {
+                if (id hostValue = [securityPolicy valueForKey:@"host"]) {
+                    if ([hostValue isKindOfClass:[NSString class]] && [(NSString *)hostValue length]) {
+                        options.sni_host = NSStringToStdString((NSString *)hostValue);
+                    }
+                }
             }
         }
     }
 
-    if (securityPolicy && [securityPolicy respondsToSelector:@selector(valueForKey:)]) {
-        id hostValue = [securityPolicy valueForKey:@"host"];
-        if ([hostValue isKindOfClass:[NSString class]] && [(NSString *)hostValue length]) {
-            options.sni_host = NSStringToStdString((NSString *)hostValue);
+    if (sni && options.sni_host.empty()) {
+        NSDictionary<NSString *, NSString *> *headers = request.allHTTPHeaderFields;
+        if (headers.count) {
+            options.headers.reserve(headers.count);
+            for (NSString *key in headers) {
+                NSString *value = headers[key];
+                if (!value) {
+                    continue;
+                }
+                options.headers.emplace_back(NSStringToStdString(key), NSStringToStdString(value));
+                if ([key caseInsensitiveCompare:@"Host"] == NSOrderedSame && value.length) {
+                    options.sni_host = NSStringToStdString(value);
+                }
+            }
         }
     }
 
