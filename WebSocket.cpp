@@ -660,4 +660,76 @@ int WebSocket::lastErrorCode() const noexcept {
 
 } // namespace bff
 
+#else
+namespace bff {
+
+class WebSocket::Private {};
+
+WebSocket::WebSocket()
+{
+}
+
+WebSocket::~WebSocket()
+{
+}
+
+bool WebSocket::open(const std::string& url)
+{
+    return false;
+}
+
+bool WebSocket::open(const WebSocketOpenOptions& options)
+{
+    return false;
+}
+
+void WebSocket::close()
+{
+}
+
+void WebSocket::close(int code, const std::string& reason)
+{
+}
+
+bool WebSocket::send(const void *data, size_t len, bool binary)
+{
+    return false;
+}
+
+void WebSocket::setOnOpen(on_open_fn_t&& cb)
+{
+}
+
+void WebSocket::setOnClose(on_close_fn_t&& cb)
+{
+}
+
+void WebSocket::setOnError(on_error_fn_t&& cb)
+{
+}
+
+void WebSocket::setOnRecv(on_recv_fn_t&& cb)
+{
+}
+
+bool WebSocket::isRunning() const noexcept
+{
+    return false;
+}
+
+WebSocketReadyState WebSocket::readyState() const noexcept
+{
+    return WebSocketReadyState::Closed;
+}
+
+const std::string& WebSocket::lastError() const noexcept
+{
+    return "";
+}
+
+int WebSocket::lastErrorCode() const noexcept
+{
+    return 0;
+}
+} // namespace bff
 #endif // __has_include(<curl/curl.h>)

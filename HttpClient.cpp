@@ -140,7 +140,7 @@ void HttpClient::post(const std::string& url, std::string&& body, CompletionCall
 
 string gzip(const string& data)
 {
-    if (data.empty()) 
+    if (data.empty())
         return {};
     z_stream stream;
     memset(&stream, 0, sizeof(stream));
@@ -176,4 +176,58 @@ void HttpClient::postGz(const std::string& url, std::string&& uncompressedBody, 
     post(url, std::move(data), std::move(cb));
 }
 
+#else
+
+bool HttpClient::Result::isSecError() const
+{
+    return false;
+}
+
+class HttpClient::Private {};
+
+HttpClient::HttpClient()
+{
+}
+
+HttpClient::~HttpClient()
+{
+}
+
+HttpClient& HttpClient::header(const std::string& name, const std::string& value)
+{
+    return *this;
+}
+
+HttpClient& HttpClient::sni(const std::string& host)
+{
+    return *this;
+}
+
+void HttpClient::get(const std::string& url, CompletionCallback&& cb)
+{
+    if (cb) {
+        cb({.httpCode = 0, .bytesSent = 0, .responseBody = {}, .error = "not implemented", .curlCode = 0});
+    }
+}
+
+void HttpClient::post(const std::string& url, CompletionCallback&& cb)
+{
+    if (cb) {
+        cb({.httpCode = 0, .bytesSent = 0, .responseBody = {}, .error = "not implemented", .curlCode = 0});
+    }
+}
+
+void HttpClient::post(const std::string& url, std::string&& body, CompletionCallback&& cb)
+{
+    if (cb) {
+        cb({.httpCode = 0, .bytesSent = 0, .responseBody = {}, .error = "not implemented", .curlCode = 0});
+    }
+}
+
+void HttpClient::postGz(const std::string& url, std::string&& uncompressedBody, CompletionCallback&& cb)
+{
+    if (cb) {
+        cb({.httpCode = 0, .bytesSent = 0, .responseBody = {}, .error = "not implemented", .curlCode = 0});
+    }
+}
 #endif // LIBCURL_VERSION_MAJOR

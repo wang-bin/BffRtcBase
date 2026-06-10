@@ -5,7 +5,7 @@
 #include <map>
 #include <unordered_set>
 
-#include "Signal.h"
+#include "Signal.hpp"
 #include "../stun_test.h"
 #include "defs.h"
 

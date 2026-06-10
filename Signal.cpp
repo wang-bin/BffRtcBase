@@ -1,4 +1,4 @@
-#include "Signal.h"
+#include "Signal.hpp"
 
 #include <atomic>
 #include <chrono>

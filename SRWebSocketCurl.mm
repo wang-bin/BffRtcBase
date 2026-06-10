@@ -2,7 +2,6 @@
 
 #include "WebSocket.h"
 
-#include <curl/curl.h>
 #include <errno.h>
 #include <memory>
 #include <string>
@@ -217,9 +216,11 @@ static bff::WebSocketOpenOptions OptionsFromRequest(NSURLRequest *request, SRSec
     }
 
     NSInteger nsCode = code;
+#ifdef LIBCURL_VERSION_MAJOR
     if (code == CURLE_COULDNT_CONNECT || code == CURLE_COULDNT_RESOLVE_HOST) {
-        nsCode = EHOSTDOWN;
+        //nsCode = EHOSTDOWN;
     }
+#endif
 
     return [NSError errorWithDomain:SRWebSocketCurlErrorDomain
                                code:nsCode
@@ -297,9 +298,11 @@ static bff::WebSocketOpenOptions OptionsFromRequest(NSURLRequest *request, SRSec
             id<SRWebSocketDelegate> delegate = strongSelf.delegate;
             if ([delegate respondsToSelector:@selector(webSocket:didFailWithError:)]) {
                 NSInteger nsCode = code;
+#ifdef LIBCURL_VERSION_MAJOR
                 if (code == CURLE_COULDNT_CONNECT || code == CURLE_COULDNT_RESOLVE_HOST) {
                     nsCode = EHOSTDOWN;
                 }
+#endif
                 NSError *err = [NSError errorWithDomain:SRWebSocketCurlErrorDomain
                                                    code:nsCode
                                                userInfo:@{NSLocalizedDescriptionKey: message ?: @"WebSocket error"}];
