@@ -260,10 +260,8 @@ void NodeSelector::updateNodesInternal(const std::string& server,
             return;
         }
 
-        json j;
-        try {
-            j = json::parse(r.responseBody);
-        } catch (...) {
+        json j = json::parse(r.responseBody, nullptr, false);
+        if (j.is_discarded()) {
             NODESEL_LOG(RtcLogLevel::Error, "parse nodelist failed");
             autoDone();
             return;
@@ -439,8 +437,8 @@ std::string NodeSelector::onNodeList(const std::vector<std::string>& nodes,
         if (!savedBest.empty() && elapsed < Config::Shared().serverRecheck) {
             // Emit cached RTTs, then refresh asynchronously.
             if (!savedInfo.empty()) {
-                try {
-                    json obj = json::parse(savedInfo);
+                json obj = json::parse(savedInfo, nullptr, false);
+                if (!obj.is_discarded()) {
                     Rtts rtts;
                     for (auto it = obj.begin(); it != obj.end(); ++it) {
                         if (it.value().is_number_integer()) {
@@ -448,8 +446,6 @@ std::string NodeSelector::onNodeList(const std::vector<std::string>& nodes,
                         }
                     }
                     updateRtts(rtts);
-                } catch (...) {
-                    // ignore
                 }
             }
             asyncSort(nodesWithPort, clientIp);

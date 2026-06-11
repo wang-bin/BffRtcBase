@@ -659,21 +659,23 @@ uint32_t Signal::timestampMs32() {
 
 bool Signal::parseIceCandidateJson(const std::string& json, IceCandidate* out) {
     if (!out) return false;
-    try {
-        const auto j = nlohmann::json::parse(json);
-        if (!j.contains("candidate") || !j.contains("sdpMid") || !j.contains("sdpMLineIndex")) {
-            return false;
-        }
-
-        IceCandidate c;
-        c.sdp = j.at("candidate").get<std::string>();
-        c.sdpMid = j.at("sdpMid").get<std::string>();
-        c.sdpMLineIndex = j.at("sdpMLineIndex").get<int>();
-        *out = std::move(c);
-        return true;
-    } catch (const std::exception&) {
+    const auto j = nlohmann::json::parse(json, nullptr, false);
+    if (j.is_discarded()) {
         return false;
     }
+    if (!j.contains("candidate") || !j.contains("sdpMid") || !j.contains("sdpMLineIndex")) {
+        return false;
+    }
+    if (!j["candidate"].is_string() || !j["sdpMid"].is_string() || !j["sdpMLineIndex"].is_number_integer()) {
+        return false;
+    }
+
+    IceCandidate c;
+    c.sdp = j["candidate"].get<std::string>();
+    c.sdpMid = j["sdpMid"].get<std::string>();
+    c.sdpMLineIndex = j["sdpMLineIndex"].get<int>();
+    *out = std::move(c);
+    return true;
 }
 
 } // namespace bff
