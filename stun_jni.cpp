@@ -5,6 +5,7 @@
 #include <vector>
 #include <android/log.h>
 #include "stun_test.h"
+#include "Log.hpp"
 #include "jmi.h"
 
 using  namespace std;
@@ -150,19 +151,19 @@ JSPPRTC_JNI_S(void, StunUtil_nativeSetLogger, jobject obj)
     }
 
     if (!obj) {
-        SetLogger(nullptr);
+        bff::SetLogger(nullptr);
         return;
     }
 
-    SetLogger([onLogMethod](const char* msg) {
+    bff::SetLogger([onLogMethod](bff::LogLevel level, const char* tag, const char* msg) {
         [[maybe_unused]] const scoped_lock __(mtx);
         if (!gObj) {
             return;
         }
         auto env = jmi::getEnv();
         jmi::LocalRef message = jmi::from_string(msg, env);
-        jmi::LocalRef tag = jmi::from_string("rtc.stun", env);
-        env->CallVoidMethod(gObj, onLogMethod, message.get<jstring>(), ANDROID_LOG_DEBUG, tag.get<jstring>());
+        jmi::LocalRef jtag = jmi::from_string(tag, env);
+        env->CallVoidMethod(gObj, onLogMethod, message.get<jstring>(), level, jtag.get<jstring>());
     });
 }
 } // extern "C"

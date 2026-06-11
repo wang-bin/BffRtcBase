@@ -6,8 +6,11 @@
 #include "ssl_roots.h"
 #endif
 
+#include "Log.hpp"
 #include <string>
 #include <vector>
+
+#define TAG "cert"
 
 using namespace std;
 
@@ -72,7 +75,7 @@ static bool openssl_add_cert_der(void *ssl_ctx, const uint8_t* data, size_t len)
     // 1. Get a pointer to the existing X509 certificate store (This store already contains the default system CAs loaded by curl)
     X509_STORE *store = SSL_CTX_get_cert_store(ctx);
     if (!store) {
-        fprintf(stderr, "Failed to get OpenSSL certificate store.\n");
+        ERROR("Failed to get OpenSSL certificate store.");
         return false;
     }
     // 2. Load your custom pinned CA from memory or a buffer (You can also use X509_LOOKUP_file if loading from a file path)
@@ -95,7 +98,7 @@ static bool openssl_add_cert_der(void *ssl_ctx, const uint8_t* data, size_t len)
     X509* cert = d2i_X509(nullptr, &data, len);
 #endif
     if (!cert) {
-        fprintf(stderr, "Failed to parse custom pinned CA certificate: %s\n", ERR_reason_error_string(ERR_peek_last_error()));
+        ERROR("Failed to parse custom pinned CA certificate: %s", ERR_reason_error_string(ERR_peek_last_error()));
         return false;
     }
 
@@ -104,7 +107,7 @@ static bool openssl_add_cert_der(void *ssl_ctx, const uint8_t* data, size_t len)
         // Note: It might return 0 if the cert is already present, which is fine
         auto err = ERR_peek_last_error();
         if (ERR_GET_REASON(err) != X509_R_CERT_ALREADY_IN_HASH_TABLE) {
-            fprintf(stderr, "Failed to add certificate to store: %s\n", ERR_reason_error_string(err));
+            ERROR("Failed to add certificate to store: %s", ERR_reason_error_string(err));
             X509_free(cert);
             return false;
         }

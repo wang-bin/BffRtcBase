@@ -14,6 +14,7 @@ add_library(${PROJECT_NAME} MODULE
     DateTime.cpp
     HttpClient.cpp
     laser-ca.der.c
+    Log.cpp
     NodeSelector.cpp
     rtc.pb-c.c
     Signal.cpp

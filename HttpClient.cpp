@@ -3,6 +3,8 @@
 #include "HttpClient.h"
 #include "Cert.h"
 #include "SniUrl.h"
+#include "Log.hpp"
+#define TAG "curl.http"
 #if __has_include(<curl/curl.h>)
 #include "restincurl.h"
 #endif
@@ -71,7 +73,7 @@ public:
             //.Option(CURLOPT_SSL_OPTIONS, (long)CURLSSLOPT_NATIVE_CA)
             .Option(CURLOPT_SSL_VERIFYPEER, 1L)
             .Option(CURLOPT_SSL_VERIFYHOST, sni.empty() ? 0L : 2L)
-            .Option(CURLOPT_VERBOSE, 1L)
+            .Option(CURLOPT_VERBOSE, 0L)
             .Option(CURLOPT_SSL_CTX_FUNCTION, ssl_ctx_callback);
     }
 

@@ -13,21 +13,14 @@
 
 // Reuse the existing STUN sorting helper used by ObjC NodeSelector.
 #include "stun_test.h"
+#include "Log.hpp"
 
+#define TAG "nodes"
 namespace bff {
 
 using json = nlohmann::json;
 
 static constexpr const char* kComponent = "nodes";
-
-// Minimal, local logging macro as requested (keeps base layer decoupled).
-#define NODESEL_LOG(level, msg)                                                        \
-    do {                                                                               \
-        (void)(level);                                                                 \
-        if ((msg) && *(msg)) {                                                         \
-            std::fprintf(stderr, "[%s] %s\n", kComponent, (msg));                       \
-        }                                                                              \
-    } while (0)
 
 struct NodeCache {
     std::mutex mtx;
@@ -89,9 +82,6 @@ static std::string rttsToJsonObjectString(const NodeSelector::Rtts& ret) {
 }
 
 NodeSelector::NodeSelector() {
-    SetLogger([](const char* msg) {
-        NODESEL_LOG(RtcLogLevel::Debug, msg);
-    });
 }
 
 NodeSelector::~NodeSelector() {
@@ -187,7 +177,7 @@ void NodeSelector::updateNodes(const std::vector<std::string>& servers,
                                const std::string* token,
                                CompletionCallback completionHandler) {
     if (servers.empty()) {
-        NODESEL_LOG(RtcLogLevel::Warn, "empty servers");
+        WARN("empty servers");
         if (completionHandler) completionHandler();
         return;
     }
@@ -255,20 +245,20 @@ void NodeSelector::updateNodesInternal(const std::string& server,
         };
 
         if (!r.error.empty() || r.httpCode < 200 || r.httpCode >= 300) {
-            NODESEL_LOG(RtcLogLevel::Error, "get nodelist failed");
+            ERROR("get nodelist failed");
             autoDone();
             return;
         }
 
         json j = json::parse(r.responseBody, nullptr, false);
         if (j.is_discarded()) {
-            NODESEL_LOG(RtcLogLevel::Error, "parse nodelist failed");
+            ERROR("parse nodelist failed");
             autoDone();
             return;
         }
 
         if (!j.contains("ips") || !j["ips"].is_array()) {
-            NODESEL_LOG(RtcLogLevel::Error, "missing ips");
+            ERROR("missing ips");
             autoDone();
             return;
         }
@@ -479,4 +469,3 @@ std::string NodeSelector::onNodeList(const std::vector<std::string>& nodes,
 }
 
 } // namespace bff
-

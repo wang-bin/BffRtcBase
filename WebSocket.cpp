@@ -20,6 +20,9 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+#include "Log.hpp"
+#define TAG "curl.ws"
+
 namespace bff {
 
 using namespace std;
@@ -85,7 +88,7 @@ static void set_options(CURL* easy, bool verify_host) {
     curl_easy_setopt(easy, CURLOPT_SSL_VERIFYPEER, 1L);
     curl_easy_setopt(easy, CURLOPT_SSL_VERIFYHOST, verify_host ? 2L : 0L);
     curl_easy_setopt(easy, CURLOPT_TCP_NODELAY, 1L);
-    curl_easy_setopt(easy, CURLOPT_VERBOSE, 1L);
+    curl_easy_setopt(easy, CURLOPT_VERBOSE, 0L);
     curl_easy_setopt(easy, CURLOPT_SSL_CTX_FUNCTION, ssl_ctx_callback);
     curl_easy_setopt(easy, CURLOPT_SSL_CTX_DATA, nullptr);
 }
@@ -278,6 +281,7 @@ public:
     }
 
     void fireError(const int code, const std::string& err) {
+        DBG("onError. code=%d, err=%s", code, err.c_str());
         bool expected = false;
         if (!error_reported.compare_exchange_strong(expected, true)) {
             return;
@@ -292,6 +296,7 @@ public:
     }
 
     void fireClose(int code, const std::string& reason, bool remote) {
+        DBG("onClose. code=%d, reason=%s, remote=%d", code, reason.c_str(), remote);
         if (close_called || error_reported.load(std::memory_order_acquire)) {
             return;
         }
@@ -436,6 +441,7 @@ bool WebSocket::open(const std::string& url) {
 }
 
 bool WebSocket::open(const WebSocketOpenOptions& options) {
+    DBG("open. sni_host=%s", options.sni_host.c_str());
     d->url = options.url;
     d->headers = options.headers;
     d->last_error.clear();
@@ -611,10 +617,12 @@ bool WebSocket::open(const WebSocketOpenOptions& options) {
 }
 
 void WebSocket::close() {
+    DBG("close");
     close(1000, {});
 }
 
 void WebSocket::close(int code, const std::string& reason) {
+    DBG("close. code=%d, reason=%s", code, reason.c_str());
     if (d) {
         d->close(code, reason);
     }

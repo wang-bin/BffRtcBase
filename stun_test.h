@@ -11,7 +11,6 @@
 #include <utility>
 #include <vector>
 
-void SetLogger(std::function<void(const char*)>&& cb);
 std::string QueryFastestStun(const std::set<std::string>& servers, int timeoutMs, std::string* clientIp = nullptr);
 std::vector<std::pair<std::string, int>> SortStun(const std::set<std::string>& servers, int timeoutMs, std::string* clientIp = nullptr);
 std::string FindBestNode(const std::vector<std::pair<std::string, int>>& rtts1, std::vector<std::pair<std::string, int>> rtts2);
