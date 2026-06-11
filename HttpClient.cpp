@@ -2,19 +2,21 @@
 
 #include "HttpClient.h"
 #include "Cert.h"
+#include "SniUrl.h"
 #if __has_include(<curl/curl.h>)
 #include "restincurl.h"
 #endif
 #include <vector>
 #include <zlib.h>
 
-// TODO: sni, HOST header, cert selected, response headers
+// TODO: HOST header, cert selected, response headers
 
 using namespace std;
 
 #ifdef LIBCURL_VERSION_MAJOR
 static CURLcode ssl_ctx_callback(CURL* curl, void* ssl_ctx, void* userdata) {
-    //SSL_CTX_set_cert_verify_callback((SSL_CTX*)ssl_ctx, my_cert_verify_callback, NULL);
+    (void)curl;
+    (void)userdata;
     if (!AddCertsToSSL(ssl_ctx))
         return CURLE_ABORTED_BY_CALLBACK;
     return CURLE_OK;
@@ -47,46 +49,6 @@ static restincurl::Client& client()
     return c;
 }
 
-class HttpClient::Private
-{
-public:
-    restincurl::RequestBuilder& SetOptions(restincurl::RequestBuilder& b) {
-        for (const auto& h : headers) {
-            b.Header(h.data());
-        }
-        if (!sni.empty()) {
-            //b.Option(CURLOPT_RESOLVE, )
-        } else {
-            //b.Option(CURLOPT_SSL_OPTIONS, CURLSSLOPT_NO_SNI);
-        }
-        return b
-            //.Option(CURLOPT_SSL_OPTIONS, (long)CURLSSLOPT_NATIVE_CA)
-            .Option(CURLOPT_SSL_VERIFYPEER, 1L)
-            .Option(CURLOPT_SSL_VERIFYHOST, 0L) // SSL: no alternative certificate subject name matches target ipv4 address '123.60.148.205'
-            //.Option(CURLOPT_CAINFO, nullptr)
-            //.Option(CURLOPT_CAPATH, nullptr)
-            .Option(CURLOPT_VERBOSE, 1L)
-            .Option(CURLOPT_SSL_CTX_FUNCTION, ssl_ctx_callback);
-    }
-
-    string sni;
-    vector<string> headers;
-};
-
-HttpClient::HttpClient()
-    : d(make_unique<Private>())
-{
-
-}
-
-HttpClient::~HttpClient() = default;
-
-HttpClient& HttpClient::header(const std::string& name, const std::string& value)
-{
-    d->headers.emplace_back(name + ": " + value);
-    return *this;
-}
-
 HttpClient::Result from(const restincurl::Result& r)
 {
     return {
@@ -98,44 +60,88 @@ HttpClient::Result from(const restincurl::Result& r)
             };
 }
 
+class HttpClient::Private
+{
+public:
+    restincurl::RequestBuilder& setOptions(restincurl::RequestBuilder& b) const {
+        for (const auto& h : headers) {
+            b.Header(h.data());
+        }
+        return b
+            //.Option(CURLOPT_SSL_OPTIONS, (long)CURLSSLOPT_NATIVE_CA)
+            .Option(CURLOPT_SSL_VERIFYPEER, 1L)
+            .Option(CURLOPT_SSL_VERIFYHOST, sni.empty() ? 0L : 2L)
+            .Option(CURLOPT_VERBOSE, 1L)
+            .Option(CURLOPT_SSL_CTX_FUNCTION, ssl_ctx_callback);
+    }
+
+    template<typename StartRequest>
+    void execute(const string& url, StartRequest&& startRequest, CompletionCallback&& cb) {
+        const auto prepared = bff::prepare_url_for_sni(url, sni);
+        curl_slist *resolve_list = nullptr;
+        if (!prepared.resolve.empty()) {
+            resolve_list = curl_slist_append(nullptr, prepared.resolve.c_str());
+        }
+
+        auto pb = client().Build();
+        auto& b = setOptions(startRequest(pb, prepared.url));
+        if (resolve_list) {
+            b.Option(CURLOPT_RESOLVE, resolve_list);
+        }
+
+        b.WithCompletion([cb = std::move(cb), resolve_list](const restincurl::Result& r) mutable {
+            if (resolve_list) {
+                curl_slist_free_all(resolve_list);
+            }
+            if (cb) {
+                cb(from(r));
+            }
+        });
+        b.Execute();
+    }
+
+    string sni;
+    vector<string> headers;
+};
+
+HttpClient::HttpClient()
+    : d(make_unique<Private>())
+{
+}
+
+HttpClient::~HttpClient() = default;
+
+HttpClient& HttpClient::header(const std::string& name, const std::string& value)
+{
+    d->headers.emplace_back(name + ": " + value);
+    return *this;
+}
+
+HttpClient& HttpClient::sni(const std::string& host)
+{
+    d->sni = host;
+    return *this;
+}
+
 void HttpClient::get(const std::string& url, CompletionCallback&& cb)
 {
-    // FIXME: b = ... crash
-    auto pb = client().Build();
-    auto& b = d->SetOptions(pb->Get(url));
-    if (cb) {
-        b.WithCompletion([cb](const restincurl::Result& r){
-            cb(from(r));
-        });
-    }
-    b.Execute();
+    d->execute(url, [](const std::unique_ptr<restincurl::RequestBuilder>& pb, const string& preparedUrl) -> restincurl::RequestBuilder& {
+        return pb->Get(preparedUrl);
+    }, std::move(cb));
 }
 
 void HttpClient::post(const std::string& url, CompletionCallback&& cb)
 {
-    auto pb = client().Build();
-    auto& b = d->SetOptions(pb->Post(url));
-    if (cb) {
-        b.WithCompletion([cb](const restincurl::Result& r){
-            cb(from(r));
-        });
-    }
-    b.Execute();
+    d->execute(url, [](const std::unique_ptr<restincurl::RequestBuilder>& pb, const string& preparedUrl) -> restincurl::RequestBuilder& {
+        return pb->Post(preparedUrl);
+    }, std::move(cb));
 }
-
 
 void HttpClient::post(const std::string& url, std::string&& body, CompletionCallback&& cb)
 {
-    auto pb = client().Build();
-    auto& b = d->SetOptions(pb->Post(url))
-        .WithJson(std::move(body))
-    ;
-    if (cb) {
-        b.WithCompletion([cb](const restincurl::Result& r){
-            cb(from(r));
-        });
-    }
-    b.Execute();
+    d->execute(url, [&body](const std::unique_ptr<restincurl::RequestBuilder>& pb, const string& preparedUrl) -> restincurl::RequestBuilder& {
+        return pb->Post(preparedUrl).WithJson(std::move(body));
+    }, std::move(cb));
 }
 
 string gzip(const string& data)
