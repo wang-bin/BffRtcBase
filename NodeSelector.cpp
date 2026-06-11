@@ -12,7 +12,7 @@
 #include "json.hpp"
 
 // Reuse the existing STUN sorting helper used by ObjC NodeSelector.
-#include "../stun_test.h"
+#include "stun_test.h"
 
 namespace bff {
 

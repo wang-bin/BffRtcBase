@@ -6,7 +6,7 @@
 #include <unordered_set>
 
 #include "Signal.hpp"
-#include "../stun_test.h"
+#include "stun_test.h"
 #include "defs.h"
 
 namespace bff {
