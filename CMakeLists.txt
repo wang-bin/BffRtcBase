@@ -18,6 +18,7 @@ add_library(${PROJECT_NAME} MODULE
     rtc.pb-c.c
     Signal.cpp
     SignalChannel.cpp
+    SniUrl.cpp
     stun_test.cpp
     WebSocket.cpp
 )

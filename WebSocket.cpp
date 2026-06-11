@@ -1,5 +1,6 @@
 #include "WebSocket.h"
 #include "Cert.h"
+#include "SniUrl.h"
 
 #if __has_include(<curl/curl.h>)
 
@@ -16,15 +17,12 @@
 #include <curl/multi.h>
 #include <curl/websockets.h>
 
-#if __has_include(<openssl/ssl.h>)
-#include <openssl/ssl.h>
-#endif
-
 #include <fcntl.h>
 #include <unistd.h>
 
 namespace bff {
 
+using namespace std;
 class WakePipe {
 public:
     WakePipe() {
@@ -74,31 +72,22 @@ private:
     int pipefd_[2] = {-1, -1};
 };
 
-struct SslUserData {
-    std::string sni_host;
-};
-
 static CURLcode ssl_ctx_callback(CURL* curl, void* ssl_ctx, void* userdata) {
-    if (!AddCertsToSSL(ssl_ctx))
+    (void)curl;
+    (void)userdata;
+    if (!AddCertsToSSL(ssl_ctx)) {
         return CURLE_ABORTED_BY_CALLBACK;
-#if __has_include(<openssl/ssl.h>)
-    if (userdata) {
-        const auto *ud = static_cast<const SslUserData *>(userdata);
-        if (!ud->sni_host.empty()) {
-            SSL_set_tlsext_host_name(static_cast<SSL *>(ssl_ctx), ud->sni_host.c_str());
-        }
     }
-#endif
     return CURLE_OK;
 }
 
-static void set_options(CURL* easy, const SslUserData& ssl_ud) {
+static void set_options(CURL* easy, bool verify_host) {
     curl_easy_setopt(easy, CURLOPT_SSL_VERIFYPEER, 1L);
-    curl_easy_setopt(easy, CURLOPT_SSL_VERIFYHOST, ssl_ud.sni_host.empty() ? 0L : 2L);
+    curl_easy_setopt(easy, CURLOPT_SSL_VERIFYHOST, verify_host ? 2L : 0L);
     curl_easy_setopt(easy, CURLOPT_TCP_NODELAY, 1L);
     curl_easy_setopt(easy, CURLOPT_VERBOSE, 1L);
     curl_easy_setopt(easy, CURLOPT_SSL_CTX_FUNCTION, ssl_ctx_callback);
-    curl_easy_setopt(easy, CURLOPT_SSL_CTX_DATA, const_cast<SslUserData *>(&ssl_ud));
+    curl_easy_setopt(easy, CURLOPT_SSL_CTX_DATA, nullptr);
 }
 
 class WebSocket::Private {
@@ -123,7 +112,6 @@ public:
 
     std::string url;
     std::vector<std::pair<std::string, std::string>> headers;
-    SslUserData ssl_ud;
     std::string last_error;
     int last_error_code = 0;
 
@@ -450,7 +438,6 @@ bool WebSocket::open(const std::string& url) {
 bool WebSocket::open(const WebSocketOpenOptions& options) {
     d->url = options.url;
     d->headers = options.headers;
-    d->ssl_ud.sni_host = options.sni_host;
     d->last_error.clear();
     d->last_error_code = 0;
     d->abort.store(false);
@@ -461,7 +448,8 @@ bool WebSocket::open(const WebSocketOpenOptions& options) {
     d->running.store(true);
     d->state.store(WebSocketReadyState::Connecting);
 
-    d->thread = std::thread([this] {
+    auto sni_host = options.sni_host;
+    d->thread = std::thread([this, sni_host] {
         CURL *easy = curl_easy_init();
         if (!easy) {
             d->running.store(false);
@@ -472,7 +460,14 @@ bool WebSocket::open(const WebSocketOpenOptions& options) {
 
         Private::UserData ud{d.get(), easy};
 
-        curl_easy_setopt(easy, CURLOPT_URL, d->url.c_str());
+        const auto prepared = prepare_url_for_sni(d->url, sni_host);
+        curl_slist *resolve_list = nullptr;
+        if (!prepared.resolve.empty()) {
+            resolve_list = curl_slist_append(nullptr, prepared.resolve.c_str());
+            curl_easy_setopt(easy, CURLOPT_RESOLVE, resolve_list);
+        }
+
+        curl_easy_setopt(easy, CURLOPT_URL, prepared.url.c_str());
         curl_easy_setopt(easy, CURLOPT_WRITEFUNCTION, &Private::write_cb);
         curl_easy_setopt(easy, CURLOPT_WRITEDATA, &ud);
 
@@ -489,7 +484,7 @@ bool WebSocket::open(const WebSocketOpenOptions& options) {
             curl_easy_setopt(easy, CURLOPT_HTTPHEADER, header_list);
         }
 
-        set_options(easy, d->ssl_ud);
+        set_options(easy, !sni_host.empty());
 
         d->easy.store(easy, std::memory_order_release);
 
@@ -502,6 +497,9 @@ bool WebSocket::open(const WebSocketOpenOptions& options) {
             curl_easy_cleanup(easy);
             if (header_list) {
                 curl_slist_free_all(header_list);
+            }
+            if (resolve_list) {
+                curl_slist_free_all(resolve_list);
             }
             return;
         }
@@ -518,6 +516,9 @@ bool WebSocket::open(const WebSocketOpenOptions& options) {
             curl_easy_cleanup(easy);
             if (header_list) {
                 curl_slist_free_all(header_list);
+            }
+            if (resolve_list) {
+                curl_slist_free_all(resolve_list);
             }
             return;
         }
@@ -599,6 +600,9 @@ bool WebSocket::open(const WebSocketOpenOptions& options) {
 
         if (header_list) {
             curl_slist_free_all(header_list);
+        }
+        if (resolve_list) {
+            curl_slist_free_all(resolve_list);
         }
         curl_easy_cleanup(easy);
     });
