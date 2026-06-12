@@ -7,6 +7,11 @@
 #define WARN(...) bff::user_log(bff::LogLevel::Warn, TAG, __VA_ARGS__);
 #define ERROR(...) bff::user_log(bff::LogLevel::Error, TAG, __VA_ARGS__);
 
+#define LOGD(...) bff::user_log(bff::LogLevel::Debug, TAG, __VA_ARGS__);
+#define LOGI(...) bff::user_log(bff::LogLevel::Info, TAG, __VA_ARGS__);
+#define LOGW(...) bff::user_log(bff::LogLevel::Warn, TAG, __VA_ARGS__);
+#define LOGE(...) bff::user_log(bff::LogLevel::Error, TAG, __VA_ARGS__);
+
 namespace bff {
 enum LogLevel { // values are the same as android_LogPriority
     Unknown = 0,

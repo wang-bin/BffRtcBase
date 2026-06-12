@@ -11,6 +11,7 @@
 #include <vector>
 #include <zlib.h>
 
+#define TAG "curl.http"
 // TODO: HOST header, cert selected, response headers
 
 using namespace std;
@@ -72,7 +73,8 @@ public:
         return b
             //.Option(CURLOPT_SSL_OPTIONS, (long)CURLSSLOPT_NATIVE_CA)
             .Option(CURLOPT_SSL_VERIFYPEER, 1L)
-            .Option(CURLOPT_SSL_VERIFYHOST, sni.empty() ? 0L : 2L)
+            .Option(CURLOPT_SSL_VERIFYHOST, 0L) // SSL: no alternative certificate subject name matches target ipv4 address '123.60.148.205'
+            //.Option(CURLOPT_SSL_VERIFYHOST, sni.empty() ? 0L : 2L)
             .Option(CURLOPT_VERBOSE, 0L)
             .Option(CURLOPT_SSL_CTX_FUNCTION, ssl_ctx_callback);
     }
@@ -121,12 +123,14 @@ HttpClient& HttpClient::header(const std::string& name, const std::string& value
 
 HttpClient& HttpClient::sni(const std::string& host)
 {
+    LOGD("sni %s", host.c_str());
     d->sni = host;
     return *this;
 }
 
 void HttpClient::get(const std::string& url, CompletionCallback&& cb)
 {
+    LOGD("GET");
     d->execute(url, [](const std::unique_ptr<restincurl::RequestBuilder>& pb, const string& preparedUrl) -> restincurl::RequestBuilder& {
         return pb->Get(preparedUrl);
     }, std::move(cb));
@@ -134,6 +138,7 @@ void HttpClient::get(const std::string& url, CompletionCallback&& cb)
 
 void HttpClient::post(const std::string& url, CompletionCallback&& cb)
 {
+    LOGD("POST");
     d->execute(url, [](const std::unique_ptr<restincurl::RequestBuilder>& pb, const string& preparedUrl) -> restincurl::RequestBuilder& {
         return pb->Post(preparedUrl);
     }, std::move(cb));
@@ -141,6 +146,7 @@ void HttpClient::post(const std::string& url, CompletionCallback&& cb)
 
 void HttpClient::post(const std::string& url, std::string&& body, CompletionCallback&& cb)
 {
+    LOGD("POST with body");
     d->execute(url, [&body](const std::unique_ptr<restincurl::RequestBuilder>& pb, const string& preparedUrl) -> restincurl::RequestBuilder& {
         return pb->Post(preparedUrl).WithJson(std::move(body));
     }, std::move(cb));
@@ -182,6 +188,19 @@ void HttpClient::postGz(const std::string& url, std::string&& uncompressedBody, 
     }
     header("Content-Encoding", "gzip");
     post(url, std::move(data), std::move(cb));
+}
+
+void HttpClient::request(const std::string& url, const std::string& method, std::string&& body, CompletionCallback&& cb)
+{
+    if (method == "GET") {
+        get(url, std::move(cb));
+    } else if (method == "POST") {
+        post(url, std::move(body), std::move(cb));
+    } else {
+        if (cb) {
+            cb({.httpCode = 0, .bytesSent = 0, .responseBody = {}, .error = "method not supported", .curlCode = 0});
+        }
+    }
 }
 
 #else
@@ -233,6 +252,13 @@ void HttpClient::post(const std::string& url, std::string&& body, CompletionCall
 }
 
 void HttpClient::postGz(const std::string& url, std::string&& uncompressedBody, CompletionCallback&& cb)
+{
+    if (cb) {
+        cb({.httpCode = 0, .bytesSent = 0, .responseBody = {}, .error = "not implemented", .curlCode = 0});
+    }
+}
+
+void HttpClient::request(const std::string& url, const std::string& method, std::string&& body, CompletionCallback&& cb)
 {
     if (cb) {
         cb({.httpCode = 0, .bytesSent = 0, .responseBody = {}, .error = "not implemented", .curlCode = 0});

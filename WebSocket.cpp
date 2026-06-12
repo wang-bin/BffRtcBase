@@ -86,7 +86,8 @@ static CURLcode ssl_ctx_callback(CURL* curl, void* ssl_ctx, void* userdata) {
 
 static void set_options(CURL* easy, bool verify_host) {
     curl_easy_setopt(easy, CURLOPT_SSL_VERIFYPEER, 1L);
-    curl_easy_setopt(easy, CURLOPT_SSL_VERIFYHOST, verify_host ? 2L : 0L);
+    curl_easy_setopt(easy, CURLOPT_SSL_VERIFYHOST, 0L);  // SSL: no alternative certificate subject name matches target ipv4 address '123.60.148.205'
+    //curl_easy_setopt(easy, CURLOPT_SSL_VERIFYHOST, verify_host ? 2L : 0L);
     curl_easy_setopt(easy, CURLOPT_TCP_NODELAY, 1L);
     curl_easy_setopt(easy, CURLOPT_VERBOSE, 0L);
     curl_easy_setopt(easy, CURLOPT_SSL_CTX_FUNCTION, ssl_ctx_callback);

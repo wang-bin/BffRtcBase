@@ -13,7 +13,7 @@ public:
         std::string error;
         int curlCode;
         std::string responseHeaders; // TODO:
-        
+
         bool isSecError() const;
     };
 
@@ -29,6 +29,8 @@ public:
     void post(const std::string& url, std::string&& body, CompletionCallback&& cb = {});
     // will compress body with gzip
     void postGz(const std::string& url, std::string&& uncompressedBody, CompletionCallback&& cb = {});
+
+    void request(const std::string& url, const std::string& method, std::string&& body, CompletionCallback&& cb = {});
 private:
     class Private;
     std::unique_ptr<Private> d;
