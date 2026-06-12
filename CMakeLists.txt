@@ -31,6 +31,7 @@ if(ANDROID)
     stun_test.cpp
     stun_jni.cpp
     curl_websocket_jni.cpp
+    curl_http_jni.cpp
     jmi.cpp
   )
   set(LIBS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../../libs)
