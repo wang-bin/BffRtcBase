@@ -5,7 +5,15 @@ project(rtcbase)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-add_compile_options(-fno-rtti)# -fno-exceptions)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+set(CMAKE_C_VISIBILITY_PRESET hidden) # or target property <LANG>_VISIBILITY_PRESET
+set(CMAKE_CXX_VISIBILITY_PRESET hidden)
+set(CMAKE_OBJC_VISIBILITY_PRESET hidden)
+set(CMAKE_OBJCXX_VISIBILITY_PRESET hidden)
+set(CMAKE_VISIBILITY_INLINES_HIDDEN ON)
+
+add_compile_options(-Oz -gdwarf-5 -g1 -flto=thin -ffunction-sections -fdata-sections -fno-rtti)# -fno-exceptions)
+add_link_options(-Wl,--gc-sections -Wl,--icf=safe)
 add_definitions(-DJSON_NOEXCEPTION)
 
 add_library(${PROJECT_NAME} MODULE
@@ -23,6 +31,7 @@ add_library(${PROJECT_NAME} MODULE
     stun_test.cpp
     WebSocket.cpp
 )
+#set_target_properties(${PROJECT_NAME} PROPERTIES INTERPROCEDURAL_OPTIMIZATION ON) # CMAKE_ANDROID_NDK_VERSION not defined, will use gold linker
 target_link_libraries(${PROJECT_NAME} PRIVATE z)
 if(ANDROID)
   target_link_libraries(${PROJECT_NAME} PRIVATE log)
