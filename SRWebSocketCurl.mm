@@ -1,7 +1,7 @@
 #import "SRWebSocketCurl.h"
 
 #include "WebSocket.h"
-
+#include "SniUrl.h"
 #include <errno.h>
 #include <memory>
 #include <string>
@@ -299,8 +299,19 @@ static bff::WebSocketOpenOptions OptionsFromRequest(NSURLRequest *request, SRSec
             if ([delegate respondsToSelector:@selector(webSocket:didFailWithError:)]) {
                 NSInteger nsCode = code;
 #ifdef LIBCURL_VERSION_MAJOR
-                if (code == CURLE_COULDNT_CONNECT || code == CURLE_COULDNT_RESOLVE_HOST) {
+                switch (code) {
+                case CURLE_COULDNT_CONNECT:
+                case CURLE_COULDNT_RESOLVE_HOST:
                     nsCode = EHOSTDOWN;
+                    break;
+                case CURLE_OPERATION_TIMEDOUT:
+                    nsCode = NSURLErrorTimedOut;
+                    break;
+                default:
+                    break;
+                }
+                if (bff::IsCurlSecError(code)) {
+                    nsCode = NSURLErrorClientCertificateRejected;
                 }
 #endif
                 NSError *err = [NSError errorWithDomain:SRWebSocketCurlErrorDomain

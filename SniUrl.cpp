@@ -12,6 +12,7 @@ using namespace std;
 bool IsCurlSecError(int curlCode)
 {
     switch (curlCode) {
+#ifdef LIBCURL_VERSION_MAJOR
     case CURLE_SSL_CACERT:
     case CURLE_SSL_CACERT_BADFILE:
     case CURLE_SSL_CRL_BADFILE:
@@ -24,6 +25,7 @@ bool IsCurlSecError(int curlCode)
     case CURLE_SSL_ENGINE_NOTFOUND:
     case CURLE_SSL_ENGINE_SETFAILED:
     // all CURLE_SSL_*
+#endif
         return true;
     default:
         return false;
