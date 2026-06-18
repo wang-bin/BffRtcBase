@@ -4,6 +4,8 @@
 
 namespace bff {
 
+bool IsCurlSecError(int curlCode);
+
 struct PreparedUrl {
     std::string url;
     std::string resolve;

@@ -24,6 +24,7 @@ public:
 
     HttpClient& header(const std::string& name, const std::string& value);
     HttpClient& sni(const std::string& host);
+    HttpClient& setConnectTimeout(int ms);
     void get(const std::string& url, CompletionCallback&& cb = {});
     void post(const std::string& url, CompletionCallback&& cb = {});
     void post(const std::string& url, std::string&& body, CompletionCallback&& cb = {});

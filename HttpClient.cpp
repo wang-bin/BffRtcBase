@@ -27,23 +27,7 @@ static CURLcode ssl_ctx_callback(CURL* curl, void* ssl_ctx, void* userdata) {
 
 bool HttpClient::Result::isSecError() const
 {
-    switch (curlCode) {
-        case CURLE_SSL_CACERT:
-        case CURLE_SSL_CACERT_BADFILE:
-        case CURLE_SSL_CRL_BADFILE:
-        case CURLE_SSL_ISSUER_ERROR:
-        case CURLE_SSL_PINNEDPUBKEYNOTMATCH:
-        case CURLE_SSL_INVALIDCERTSTATUS:
-        case CURLE_SSL_CERTPROBLEM:
-        case CURLE_SSL_CIPHER:
-        case CURLE_SSL_CONNECT_ERROR:
-        case CURLE_SSL_ENGINE_NOTFOUND:
-        case CURLE_SSL_ENGINE_SETFAILED:
-        // all CURLE_SSL_*
-            return true;
-        default:
-            return false;
-    }
+    return bff::IsCurlSecError(curlCode);
 }
 
 static restincurl::Client& client()
@@ -66,9 +50,14 @@ HttpClient::Result from(const restincurl::Result& r)
 class HttpClient::Private
 {
 public:
+    int connectTimeout = -1;
+
     restincurl::RequestBuilder& setOptions(restincurl::RequestBuilder& b) const {
         for (const auto& h : headers) {
             b.Header(h.data());
+        }
+        if (connectTimeout > 0) {
+            b.ConnectTimeout(connectTimeout);
         }
         return b
             //.Option(CURLOPT_SSL_OPTIONS, (long)CURLSSLOPT_NATIVE_CA)
@@ -125,6 +114,12 @@ HttpClient& HttpClient::sni(const std::string& host)
 {
     LOGD("sni %s", host.c_str());
     d->sni = host;
+    return *this;
+}
+
+HttpClient& HttpClient::setConnectTimeout(int ms)
+{
+    d->connectTimeout = ms;
     return *this;
 }
 
@@ -226,6 +221,11 @@ HttpClient& HttpClient::header(const std::string& name, const std::string& value
 }
 
 HttpClient& HttpClient::sni(const std::string& host)
+{
+    return *this;
+}
+
+HttpClient& HttpClient::setConnectTimeout(int ms)
 {
     return *this;
 }

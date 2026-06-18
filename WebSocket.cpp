@@ -143,6 +143,7 @@ public:
     bool local_close_requested = false;
     std::atomic<bool> open_notified{false};
     std::atomic<bool> error_reported{false};
+    int connect_timeout = 0;
 
     void notifyOpen() {
         bool expected = false;
@@ -475,6 +476,9 @@ bool WebSocket::open(const WebSocketOpenOptions& options) {
         }
 
         curl_easy_setopt(easy, CURLOPT_URL, prepared.url.c_str());
+        if (d->connect_timeout > 0) {
+            curl_easy_setopt(easy, CURLOPT_CONNECTTIMEOUT_MS, (long)d->connect_timeout);
+        }
         curl_easy_setopt(easy, CURLOPT_WRITEFUNCTION, &Private::write_cb);
         curl_easy_setopt(easy, CURLOPT_WRITEDATA, &ud);
 
@@ -671,6 +675,10 @@ int WebSocket::lastErrorCode() const noexcept {
     return d->last_error_code;
 }
 
+void WebSocket::setConnectTimeout(int ms) {
+    d->connect_timeout = ms;
+}
+
 } // namespace bff
 
 #else
@@ -722,6 +730,10 @@ void WebSocket::setOnError(on_error_fn_t&& cb)
 }
 
 void WebSocket::setOnRecv(on_recv_fn_t&& cb)
+{
+}
+
+void WebSocket::setConnectTimeout(int ms)
 {
 }
 

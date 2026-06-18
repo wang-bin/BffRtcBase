@@ -47,6 +47,8 @@ remote – Returns whether or not the closing of the connection was initiated by
     void setOnError(on_error_fn_t&& cb);
     void setOnRecv(on_recv_fn_t&& cb);
 
+    void setConnectTimeout(int ms);
+
     bool open(const std::string& url);
     bool open(const WebSocketOpenOptions& options);
     void close();

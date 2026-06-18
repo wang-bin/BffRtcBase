@@ -1693,7 +1693,7 @@ namespace restincurl {
         bool is_built_ = false;
         completion_fn_t completion_;
         long request_timeout_ = 10000L; // 10 seconds
-        long connect_timeout_ = 3000L; // 1 second
+        long connect_timeout_ = 3000L; // 3 second
 #if RESTINCURL_ENABLE_ASYNC
         Worker *worker_{};
 #endif

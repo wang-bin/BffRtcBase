@@ -3,9 +3,32 @@
 #if defined(__ANDROID__) || defined(__linux__) || defined(__APPLE__)
 #include <arpa/inet.h>
 #endif
-
+#if __has_include(<curl/curl.h>)
+#include <curl/curl.h>
+#endif
 namespace bff {
 using namespace std;
+
+bool IsCurlSecError(int curlCode)
+{
+    switch (curlCode) {
+    case CURLE_SSL_CACERT:
+    case CURLE_SSL_CACERT_BADFILE:
+    case CURLE_SSL_CRL_BADFILE:
+    case CURLE_SSL_ISSUER_ERROR:
+    case CURLE_SSL_PINNEDPUBKEYNOTMATCH:
+    case CURLE_SSL_INVALIDCERTSTATUS:
+    case CURLE_SSL_CERTPROBLEM:
+    case CURLE_SSL_CIPHER:
+    case CURLE_SSL_CONNECT_ERROR:
+    case CURLE_SSL_ENGINE_NOTFOUND:
+    case CURLE_SSL_ENGINE_SETFAILED:
+    // all CURLE_SSL_*
+        return true;
+    default:
+        return false;
+    }
+}
 
 bool is_numeric_host(const string& host) {
     if (host.empty()) {
