@@ -23,6 +23,17 @@
 #include "Log.hpp"
 #define TAG "curl.ws"
 
+namespace {
+
+thread_local int g_in_curl_callback = 0;
+
+struct CurlCallbackGuard {
+    CurlCallbackGuard() { ++g_in_curl_callback; }
+    ~CurlCallbackGuard() { --g_in_curl_callback; }
+};
+
+} // namespace
+
 namespace bff {
 
 using namespace std;
@@ -171,6 +182,10 @@ public:
 
     void wakeWorker() {
         wake_pipe.signal();
+        // curl_easy_* / curl_multi_* are not re-entrant from write/xfer callbacks.
+        if (g_in_curl_callback > 0) {
+            return;
+        }
 #if LIBCURL_VERSION_NUM >= 0x074400
         if (auto *m = multi.load(std::memory_order_acquire)) {
             curl_multi_wakeup(m);
@@ -184,13 +199,13 @@ public:
     static int xferinfo_cb(void *clientp,
                            curl_off_t /*dltotal*/, curl_off_t /*dlnow*/,
                            curl_off_t /*ultotal*/, curl_off_t /*ulnow*/) {
+        CurlCallbackGuard guard;
         auto *ud = reinterpret_cast<UserData *>(clientp);
         if (!ud || !ud->self) {
             return 0;
         }
         if (ud->easy) {
             ud->self->notifyOpen();
-            ud->self->flushSendQueue(ud->easy);
         }
         return ud->self->abort.load() ? 1 : 0;
     }
@@ -201,6 +216,7 @@ public:
             return bytes;
         }
 
+        CurlCallbackGuard guard;
         auto *ud = reinterpret_cast<UserData *>(userdata);
         if (!ud || !ud->self || !ud->easy) {
             return bytes;
@@ -280,7 +296,6 @@ public:
             ud->self->rx_expected_offset = 0;
         }
 
-        ud->self->flushSendQueue(ud->easy);
         return bytes;
     }
 
