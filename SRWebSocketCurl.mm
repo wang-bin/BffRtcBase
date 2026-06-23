@@ -363,7 +363,7 @@ static bff::WebSocketOpenOptions OptionsFromRequest(NSURLRequest *request, SRSec
     }
     [self setCurlReadyState:SR_CLOSING];
     if (_ws) {
-        _ws->close(static_cast<int>(code), NSStringToStdString(reason));
+        _ws->closeAsync(static_cast<int>(code), NSStringToStdString(reason));
     }
 }
 

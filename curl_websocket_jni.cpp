@@ -201,6 +201,18 @@ CURLWS_JNI(void, nativeClose, jlong handle, jint code, jstring reason) {
     native_ws->ws->close(code, reason_text);
 }
 
+CURLWS_JNI(void, nativeCloseAsync, jlong handle, jint code, jstring reason) {
+    auto *native_ws = fromHandle(handle);
+    if (!native_ws || !native_ws->ws) {
+        return;
+    }
+    std::string reason_text;
+    if (reason) {
+        reason_text = jmi::to_string(reason, env);
+    }
+    native_ws->ws->closeAsync(code, reason_text);
+}
+
 CURLWS_JNI(jboolean, nativeSend, jlong handle, jbyteArray data, jint offset, jint length,
            jboolean binary) {
     auto *native_ws = fromHandle(handle);

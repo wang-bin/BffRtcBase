@@ -53,6 +53,8 @@ remote – Returns whether or not the closing of the connection was initiated by
     bool open(const WebSocketOpenOptions& options);
     void close();
     void close(int code, const std::string& reason = {});
+    // Signal shutdown without joining the worker thread (safe from the worker thread).
+    void closeAsync(int code = 1000, const std::string& reason = {});
 
     bool send(const std::string& data, bool binary) {
         return send(data.data(), data.size(), binary);

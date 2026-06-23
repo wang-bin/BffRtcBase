@@ -141,6 +141,8 @@ public:
 
     bool close_called = false;
     bool local_close_requested = false;
+    int local_close_code = 1000;
+    std::string local_close_reason;
     std::atomic<bool> open_notified{false};
     std::atomic<bool> error_reported{false};
     int connect_timeout = 0;
@@ -391,27 +393,34 @@ public:
         sendq.push_back(std::move(item));
     }
 
+    void requestClose(int code, const std::string& reason) {
+        local_close_requested = true;
+        local_close_code = code >= 1000 ? code : 1000;
+        local_close_reason = reason;
+
+        const auto current = state.load();
+        if (current == WebSocketReadyState::Closed) {
+            return;
+        }
+        if (current != WebSocketReadyState::Closing && thread.joinable()) {
+            state.store(WebSocketReadyState::Closing);
+            if (running.load()) {
+                queueCloseFrame(local_close_code, local_close_reason);
+            }
+        }
+        abort.store(true);
+        wakeWorker();
+    }
+
+    void closeAsync(int code, const std::string& reason) {
+        std::lock_guard<std::mutex> lock(lifecycle_mutex);
+        requestClose(code, reason);
+    }
+
     void close(int code, const std::string& reason) {
         std::lock_guard<std::mutex> lock(lifecycle_mutex);
 
-        local_close_requested = true;
-        const auto current = state.load();
-        if (current != WebSocketReadyState::Closed &&
-            current != WebSocketReadyState::Closing &&
-            thread.joinable()) {
-            state.store(WebSocketReadyState::Closing);
-            if (running.load()) {
-                queueCloseFrame(code, reason);
-            }
-            wakeWorker();
-            abort.store(true);
-            wakeWorker();
-        } else if (thread.joinable()) {
-            // Worker may have already set state to Closed without a join on this side.
-            abort.store(true);
-            wakeWorker();
-        }
-
+        requestClose(code, reason);
         joinThreadLocked();
 
         {
@@ -451,6 +460,8 @@ bool WebSocket::open(const WebSocketOpenOptions& options) {
     d->abort.store(false);
     d->close_called = false;
     d->local_close_requested = false;
+    d->local_close_code = 1000;
+    d->local_close_reason.clear();
     d->open_notified.store(false);
     d->error_reported.store(false);
     d->running.store(true);
@@ -603,9 +614,13 @@ bool WebSocket::open(const WebSocketOpenOptions& options) {
 
         if (!d->abort.load() && rc != CURLE_OK) {
             d->fireError(static_cast<int>(rc), curl_easy_strerror(rc));
-        } else if (!d->close_called && !d->error_reported.load() && !d->local_close_requested) {
-            // Peer closed without a WS CLOSE frame; local close is reported by close().
-            d->fireClose(1000, {}, true);
+        } else if (!d->close_called && !d->error_reported.load()) {
+            if (d->local_close_requested) {
+                d->fireClose(d->local_close_code, d->local_close_reason, false);
+            } else {
+                // Peer closed without a WS CLOSE frame; sync close() reports local close after join.
+                d->fireClose(1000, {}, true);
+            }
         }
         d->state.store(WebSocketReadyState::Closed);
 
@@ -630,6 +645,13 @@ void WebSocket::close(int code, const std::string& reason) {
     DBG("close. code=%d, reason=%s", code, reason.c_str());
     if (d) {
         d->close(code, reason);
+    }
+}
+
+void WebSocket::closeAsync(int code, const std::string& reason) {
+    DBG("closeAsync. code=%d, reason=%s", code, reason.c_str());
+    if (d) {
+        d->closeAsync(code, reason);
     }
 }
 
@@ -709,6 +731,10 @@ void WebSocket::close()
 }
 
 void WebSocket::close(int code, const std::string& reason)
+{
+}
+
+void WebSocket::closeAsync(int code, const std::string& reason)
 {
 }
 
