@@ -111,7 +111,7 @@ public:
     std::atomic<bool> running{false};
     std::atomic<CURL *> easy{nullptr};
     std::atomic<CURLM *> multi{nullptr};
-    std::atomic<WebSocketReadyState> state{WebSocketReadyState::Closed};
+    std::atomic<WebSocket::State> state{WebSocket::State::Closed};
     std::thread thread;
 
     std::string url;
@@ -141,7 +141,7 @@ public:
 
     bool close_called = false;
     bool local_close_requested = false;
-    int local_close_code = 1000;
+    WebSocket::CloseCode local_close_code = WebSocket::CloseCode::Normal;
     std::string local_close_reason;
     std::atomic<bool> open_notified{false};
     std::atomic<bool> error_reported{false};
@@ -152,7 +152,7 @@ public:
         if (!open_notified.compare_exchange_strong(expected, true)) {
             return;
         }
-        state.store(WebSocketReadyState::Open);
+        state.store(WebSocket::State::Open);
         if (on_open) {
             on_open();
         }
@@ -234,12 +234,12 @@ public:
             ud->self->close_expected_offset += bytes;
 
             if (meta->bytesleft == 0) {
-                int code = 1005; // "no status received" (RFC 6455)
+                WebSocket::CloseCode code = WebSocket::CloseCode::NoCode;
                 std::string reason;
                 if (ud->self->close_buf.size() >= 2) {
                     const unsigned char b0 = static_cast<unsigned char>(ud->self->close_buf[0]);
                     const unsigned char b1 = static_cast<unsigned char>(ud->self->close_buf[1]);
-                    code = (static_cast<int>(b0) << 8) | static_cast<int>(b1);
+                    code = static_cast<WebSocket::CloseCode>((static_cast<int>(b0) << 8) | static_cast<int>(b1));
                     if (ud->self->close_buf.size() > 2) {
                         reason.assign(ud->self->close_buf.data() + 2,
                                       ud->self->close_buf.data() + ud->self->close_buf.size());
@@ -299,8 +299,8 @@ public:
         }
     }
 
-    void fireClose(int code, const std::string& reason, bool remote) {
-        DBG("onClose. code=%d, reason=%s, remote=%d", code, reason.c_str(), remote);
+    void fireClose(WebSocket::CloseCode code, const std::string& reason, bool remote) {
+        DBG("onClose. code=%d, reason=%s, remote=%d", std::to_underlying(code), reason.c_str(), remote);
         if (close_called || error_reported.load(std::memory_order_acquire)) {
             return;
         }
@@ -372,9 +372,9 @@ public:
         }
     }
 
-    void queueCloseFrame(int code, const std::string& reason) {
+    void queueCloseFrame(WebSocket::CloseCode code, const std::string& reason) {
         unsigned char payload[2 + 123];
-        const int normalized = code >= 1000 ? code : 1000;
+        const int normalized = std::to_underlying(code);
         payload[0] = static_cast<unsigned char>((normalized >> 8) & 0xff);
         payload[1] = static_cast<unsigned char>(normalized & 0xff);
         size_t payload_len = 2;
@@ -393,17 +393,17 @@ public:
         sendq.push_back(std::move(item));
     }
 
-    void requestClose(int code, const std::string& reason) {
+    void requestClose(WebSocket::CloseCode code, const std::string& reason) {
         local_close_requested = true;
-        local_close_code = code >= 1000 ? code : 1000;
+        local_close_code = code;
         local_close_reason = reason;
 
         const auto current = state.load();
-        if (current == WebSocketReadyState::Closed) {
+        if (current == WebSocket::State::Closed) {
             return;
         }
-        if (current != WebSocketReadyState::Closing && thread.joinable()) {
-            state.store(WebSocketReadyState::Closing);
+        if (current != WebSocket::State::Closing && thread.joinable()) {
+            state.store(WebSocket::State::Closing);
             if (running.load()) {
                 queueCloseFrame(local_close_code, local_close_reason);
             }
@@ -412,12 +412,12 @@ public:
         wakeWorker();
     }
 
-    void closeAsync(int code, const std::string& reason) {
+    void closeAsync(WebSocket::CloseCode code, const std::string& reason) {
         std::lock_guard<std::mutex> lock(lifecycle_mutex);
         requestClose(code, reason);
     }
 
-    void close(int code, const std::string& reason) {
+    void close(WebSocket::CloseCode code, const std::string& reason) {
         std::lock_guard<std::mutex> lock(lifecycle_mutex);
 
         requestClose(code, reason);
@@ -434,7 +434,7 @@ public:
         if (!close_called && !error_reported.load(std::memory_order_acquire)) {
             fireClose(code, reason, false);
         }
-        state.store(WebSocketReadyState::Closed);
+        state.store(WebSocket::State::Closed);
     }
 };
 
@@ -446,12 +446,12 @@ WebSocket::~WebSocket() {
 }
 
 bool WebSocket::open(const std::string& url) {
-    WebSocketOpenOptions options;
+    OpenOptions options;
     options.url = url;
     return open(options);
 }
 
-bool WebSocket::open(const WebSocketOpenOptions& options) {
+bool WebSocket::open(const OpenOptions& options) {
     DBG("open. sni_host=%s", options.sni_host.c_str());
     d->url = options.url;
     d->headers = options.headers;
@@ -460,20 +460,20 @@ bool WebSocket::open(const WebSocketOpenOptions& options) {
     d->abort.store(false);
     d->close_called = false;
     d->local_close_requested = false;
-    d->local_close_code = 1000;
+    d->local_close_code = CloseCode::Normal;
     d->local_close_reason.clear();
     d->open_notified.store(false);
     d->error_reported.store(false);
     d->running.store(true);
-    d->state.store(WebSocketReadyState::Connecting);
+    d->state.store(WebSocket::State::Connecting);
 
     auto sni_host = options.sni_host;
     d->thread = std::thread([this, sni_host] {
         CURL *easy = curl_easy_init();
         if (!easy) {
             d->running.store(false);
-            d->state.store(WebSocketReadyState::Closed);
-            d->fireError(-1, "curl_easy_init failed");
+            d->state.store(WebSocket::State::Closed);
+            d->fireError(std::to_underlying(CloseCode::NeverConnected), "curl_easy_init failed");
             return;
         }
 
@@ -513,9 +513,9 @@ bool WebSocket::open(const WebSocketOpenOptions& options) {
         CURLM *multi = curl_multi_init();
         if (!multi) {
             d->running.store(false);
-            d->state.store(WebSocketReadyState::Closed);
+            d->state.store(WebSocket::State::Closed);
             d->easy.store(nullptr, std::memory_order_release);
-            d->fireError(-1, "curl_multi_init failed");
+            d->fireError(std::to_underlying(CloseCode::NeverConnected), "curl_multi_init failed");
             curl_easy_cleanup(easy);
             if (header_list) {
                 curl_slist_free_all(header_list);
@@ -532,7 +532,7 @@ bool WebSocket::open(const WebSocketOpenOptions& options) {
             d->multi.store(nullptr, std::memory_order_release);
             curl_multi_cleanup(multi);
             d->running.store(false);
-            d->state.store(WebSocketReadyState::Closed);
+            d->state.store(WebSocket::State::Closed);
             d->easy.store(nullptr, std::memory_order_release);
             d->fireError(static_cast<int>(mc), curl_multi_strerror(mc));
             curl_easy_cleanup(easy);
@@ -619,10 +619,10 @@ bool WebSocket::open(const WebSocketOpenOptions& options) {
                 d->fireClose(d->local_close_code, d->local_close_reason, false);
             } else {
                 // Peer closed without a WS CLOSE frame; sync close() reports local close after join.
-                d->fireClose(1000, {}, true);
+                d->fireClose(CloseCode::Normal, {}, true);
             }
         }
-        d->state.store(WebSocketReadyState::Closed);
+        d->state.store(WebSocket::State::Closed);
 
         if (header_list) {
             curl_slist_free_all(header_list);
@@ -638,18 +638,18 @@ bool WebSocket::open(const WebSocketOpenOptions& options) {
 
 void WebSocket::close() {
     DBG("close");
-    close(1000, {});
+    close(CloseCode::Normal);
 }
 
-void WebSocket::close(int code, const std::string& reason) {
-    DBG("close. code=%d, reason=%s", code, reason.c_str());
+void WebSocket::close(CloseCode code, const std::string& reason) {
+    DBG("close. code=%d, reason=%s", std::to_underlying(code), reason.c_str());
     if (d) {
         d->close(code, reason);
     }
 }
 
-void WebSocket::closeAsync(int code, const std::string& reason) {
-    DBG("closeAsync. code=%d, reason=%s", code, reason.c_str());
+void WebSocket::closeAsync(CloseCode code, const std::string& reason) {
+    DBG("closeAsync. code=%d, reason=%s", std::to_underlying(code), reason.c_str());
     if (d) {
         d->closeAsync(code, reason);
     }
@@ -685,7 +685,7 @@ bool WebSocket::isRunning() const noexcept {
     return d->running.load();
 }
 
-WebSocketReadyState WebSocket::readyState() const noexcept {
+WebSocket::State WebSocket::readyState() const noexcept {
     return d->state.load();
 }
 
@@ -721,7 +721,7 @@ bool WebSocket::open(const std::string& url)
     return false;
 }
 
-bool WebSocket::open(const WebSocketOpenOptions& options)
+bool WebSocket::open(const OpenOptions& options)
 {
     return false;
 }
@@ -730,11 +730,11 @@ void WebSocket::close()
 {
 }
 
-void WebSocket::close(int code, const std::string& reason)
+void WebSocket::close(CloseCode code, const std::string& reason)
 {
 }
 
-void WebSocket::closeAsync(int code, const std::string& reason)
+void WebSocket::closeAsync(CloseCode code, const std::string& reason)
 {
 }
 
@@ -768,9 +768,9 @@ bool WebSocket::isRunning() const noexcept
     return false;
 }
 
-WebSocketReadyState WebSocket::readyState() const noexcept
+WebSocket::State WebSocket::readyState() const noexcept
 {
-    return WebSocketReadyState::Closed;
+    return WebSocket::State::Closed;
 }
 
 const std::string& WebSocket::lastError() const noexcept

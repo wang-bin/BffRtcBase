@@ -73,7 +73,7 @@ public:
         websocket.setOnOpen([this]() {
             state_string = "open";
         });
-        websocket.setOnClose([this](int, std::string, bool remote) {
+        websocket.setOnClose([this](WebSocket::CloseCode, std::string, bool remote) {
             state_string = "closed";
             if (remote && owner) {
                 owner->onReconnect();

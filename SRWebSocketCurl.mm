@@ -144,9 +144,9 @@ static NSString *StdStringToNSString(const std::string &value)
                                   encoding:NSUTF8StringEncoding] ?: @"";
 }
 
-static bff::WebSocketOpenOptions OptionsFromRequest(NSURLRequest *request, SRSecurityPolicy *securityPolicy)
+static bff::WebSocket::OpenOptions OptionsFromRequest(NSURLRequest *request, SRSecurityPolicy *securityPolicy)
 {
-    bff::WebSocketOpenOptions options;
+    bff::WebSocket::OpenOptions options;
     options.url = NSStringToStdString(request.URL.absoluteString);
 
     BOOL sni = YES;
@@ -322,19 +322,20 @@ static bff::WebSocketOpenOptions OptionsFromRequest(NSURLRequest *request, SRSec
         }];
     });
 
-    _ws->setOnClose([weakSelf](int code, std::string reason, bool remote) {
+    _ws->setOnClose([weakSelf](bff::WebSocket::CloseCode code, std::string reason, bool remote) {
         __strong typeof(weakSelf) strongSelf = weakSelf;
         if (!strongSelf) {
             return;
         }
         NSString *reasonText = reason.empty() ? nil : StdStringToNSString(reason);
-        const BOOL wasClean = code == SRStatusCodeNormal || code == SRStatusCodeGoingAway;
+        const BOOL wasClean = std::to_underlying(code) == std::to_underlying(bff::WebSocket::CloseCode::Normal)
+            || std::to_underlying(code) == std::to_underlying(bff::WebSocket::CloseCode::GoingAway);
         [strongSelf performDelegate:^{
             [strongSelf setCurlReadyState:SR_CLOSED];
             id<SRWebSocketDelegate> delegate = strongSelf.delegate;
             if ([delegate respondsToSelector:@selector(webSocket:didCloseWithCode:reason:wasClean:)]) {
                 [delegate webSocket:strongSelf
-                     didCloseWithCode:code
+                     didCloseWithCode:std::to_underlying(code)
                                reason:reasonText
                              wasClean:wasClean];
             }
@@ -363,7 +364,7 @@ static bff::WebSocketOpenOptions OptionsFromRequest(NSURLRequest *request, SRSec
     }
     [self setCurlReadyState:SR_CLOSING];
     if (_ws) {
-        _ws->closeAsync(static_cast<int>(code), NSStringToStdString(reason));
+        _ws->closeAsync(static_cast<bff::WebSocket::CloseCode>(code), NSStringToStdString(reason));
     }
 }
 

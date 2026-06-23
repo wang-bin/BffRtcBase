@@ -79,10 +79,10 @@ void wireCallbacks(NativeWebSocket *native_ws) {
         });
     });
 
-    native_ws->ws->setOnClose([native_ws](int code, std::string reason, bool remote) {
+    native_ws->ws->setOnClose([native_ws](bff::WebSocket::CloseCode code, std::string reason, bool remote) {
         callOnNativeThread(native_ws, [native_ws, code, reason = std::move(reason), remote](JNIEnv *env) mutable {
             jmi::LocalRef jreason(reason.empty() ? nullptr : jmi::from_string(reason, env), env);
-            env->CallVoidMethod(native_ws->java_client, native_ws->mid_close, code,
+            env->CallVoidMethod(native_ws->java_client, native_ws->mid_close, std::to_underlying(code),
                                 jreason.get<jstring>(), remote ? JNI_TRUE : JNI_FALSE);
         });
     });
@@ -155,7 +155,7 @@ CURLWS_JNI(jboolean, nativeOpen, jlong handle, jstring url, jobjectArray header_
         return JNI_FALSE;
     }
 
-    bff::WebSocketOpenOptions options;
+    bff::WebSocket::OpenOptions options;
     options.url = jmi::to_string(url, env);
 
     if (header_keys && header_values) {
@@ -198,7 +198,7 @@ CURLWS_JNI(void, nativeClose, jlong handle, jint code, jstring reason) {
     if (reason) {
         reason_text = jmi::to_string(reason, env);
     }
-    native_ws->ws->close(code, reason_text);
+    native_ws->ws->close(static_cast<bff::WebSocket::CloseCode>(code), reason_text);
 }
 
 CURLWS_JNI(void, nativeCloseAsync, jlong handle, jint code, jstring reason) {
@@ -210,7 +210,7 @@ CURLWS_JNI(void, nativeCloseAsync, jlong handle, jint code, jstring reason) {
     if (reason) {
         reason_text = jmi::to_string(reason, env);
     }
-    native_ws->ws->closeAsync(code, reason_text);
+    native_ws->ws->closeAsync(static_cast<bff::WebSocket::CloseCode>(code), reason_text);
 }
 
 CURLWS_JNI(jboolean, nativeSend, jlong handle, jbyteArray data, jint offset, jint length,
@@ -228,7 +228,7 @@ CURLWS_JNI(jboolean, nativeSend, jlong handle, jbyteArray data, jint offset, jin
 CURLWS_JNI(jint, nativeReadyState, jlong handle) {
     auto *native_ws = fromHandle(handle);
     if (!native_ws || !native_ws->ws) {
-        return static_cast<jint>(bff::WebSocketReadyState::Closed);
+        return static_cast<jint>(bff::WebSocket::State::Closed);
     }
     return static_cast<jint>(native_ws->ws->readyState());
 }

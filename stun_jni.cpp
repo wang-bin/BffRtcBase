@@ -1,5 +1,6 @@
 #if (__ANDROID__ + 0)
 #include <jni.h>
+#include <mutex>
 #include <string>
 #include <set>
 #include <vector>
