@@ -6,11 +6,11 @@
 #include <unordered_set>
 
 #include "Signal.hpp"
-#include "stun_test.h"
-#include "defs.h"
 
 namespace bff {
 namespace {
+
+constexpr uint32_t kPerChannelNodeRttsSdkVersion = 10302;
 
 std::string toLower(std::string s) {
     std::transform(s.begin(), s.end(), s.begin(), [](unsigned char ch) {
@@ -93,9 +93,6 @@ public:
         SignalChannelJoinedUpdate update;
         update.peerIds.reserve(nPeers);
 
-        std::vector<std::pair<std::string, int>> nodeRtts;
-        std::vector<std::pair<std::string, int>> nodeRttsSelf;
-
         for (size_t i = 0; i < nPeers; ++i) {
             const auto* peer = peers ? peers[i] : nullptr;
             if (!peer || !peer->id) {
@@ -114,14 +111,17 @@ public:
             if (isSelf) {
                 update.selfJoined = true;
                 if (peer->n_node_rtts > 0) {
-                    nodeRttsSelf = toNodeRtts(peer);
+                    signal_->applyNodeRtts(toNodeRtts(peer), true);
                 }
             } else if (!autoMediaJoin) {
                 if (peer->n_codecs > 0) {
                     signal_->setVcodecs(commonCodecs(signal_->vcodecs(), peer));
                 }
+                if (isNewPeer && peer->sdk_version > 0 && peer->sdk_version < kPerChannelNodeRttsSdkVersion) {
+                    signal_->sendNodeRttsForLegacyPeer();
+                }
                 if (peer->n_node_rtts > 0) {
-                    nodeRtts = toNodeRtts(peer);
+                    signal_->applyNodeRtts(toNodeRtts(peer), false);
                 }
             }
 
@@ -140,27 +140,16 @@ public:
         }
         signal_->setOrientation(orientation);
 
-        if (!nodeRttsSelf.empty()) {
-            node_rtts_self_ = std::move(nodeRttsSelf);
-        }
-        if (!nodeRtts.empty()) {
-            node_rtts_ = std::move(nodeRtts);
-        }
-
         update.peersIncreased = peers_.size() > previousPeerCount;
-        update.canJoin = !joined_ && !autoMediaJoin && peers_.size() > 1
-            && !node_rtts_self_.empty() && !node_rtts_.empty();
-
-        if (update.canJoin) {
+        if (!joined_ && !autoMediaJoin && peers_.size() > 1 && signal_->nodeSelected()) {
             joined_ = true;
-            preferred_node_ = Config::Shared().server.empty() ? FindBestNode(node_rtts_self_, node_rtts_) : Config::Shared().server;
-            join();
+            update.canJoin = signal_->joinAllChannelsIfNeeded();
         }
         return update;
     }
 
     void join() override {
-        signal_->join(preferred_node_, channel_);
+        signal_->join(channel_);
     }
 
     void srtpKey(const std::string& key, Rtc__SrtpProfile profile) override { signal_->srtpKey(key, profile, channel_); }
@@ -183,9 +172,6 @@ private:
     std::unordered_set<std::string> peers_;
     std::unordered_set<std::string> joined_peers_;
     bool joined_ = false;
-    std::string preferred_node_;
-    std::vector<std::pair<std::string, int>> node_rtts_self_;
-    std::vector<std::pair<std::string, int>> node_rtts_;
     std::map<std::string, bool> video_orientation_;
 };
 

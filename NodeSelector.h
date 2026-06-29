@@ -46,6 +46,12 @@ public:
                            uint16_t port,
                            const std::string* clientIp);
 
+    // The media node shared by all channels on a connection. Self/peer node rtts
+    // are stored here and the best node is selected once, then reused by every
+    // channel.
+    void applyNodeRtts(const Rtts& rtts, bool isSelf);
+    const std::string& bestNodeNegotiated() const;
+
 private:
     void updateRtts(const Rtts& result);
     void asyncSort(const std::vector<std::string>& nodesWithPort, const std::string* ip);
@@ -66,6 +72,10 @@ private:
 
     std::mutex connect_cancel_mtx_;
     std::shared_ptr<std::atomic_bool> connect_cancel_;
+
+    Rtts node_rtts_self_;
+    Rtts node_rtts_;
+    std::string best_node_negotiated_;
 };
 
 } // namespace bff

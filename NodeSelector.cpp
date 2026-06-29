@@ -98,6 +98,28 @@ void NodeSelector::updateRtts(const Rtts& result) {
     }
 }
 
+void NodeSelector::applyNodeRtts(const Rtts& rtts, bool isSelf) {
+    if (isSelf) {
+        node_rtts_self_ = rtts;
+    } else {
+        node_rtts_ = rtts;
+    }
+    if (!Config::Shared().server.empty()) {
+        best_node_negotiated_ = Config::Shared().server;
+    }
+    // All channels (mesh/sfu) share one connection and must use the same media
+    // node, so select it once both self and peer rtts are available and reuse it.
+    if (!best_node_negotiated_.empty() || node_rtts_self_.empty() || node_rtts_.empty()) {
+        return;
+    }
+    best_node_negotiated_ = FindBestNode(node_rtts_self_, node_rtts_);
+    INFO("best node for peers: %s", best_node_negotiated_.c_str());
+}
+
+const std::string& NodeSelector::bestNodeNegotiated() const {
+    return best_node_negotiated_;
+}
+
 void NodeSelector::setConnectCancelFlag(std::shared_ptr<std::atomic_bool> cancel) {
     std::lock_guard<std::mutex> lock(connect_cancel_mtx_);
     if (connect_cancel_) {
@@ -394,6 +416,7 @@ std::string NodeSelector::onNodeList(const std::vector<std::string>& nodes,
     // If user provided preferred node, return it but still refresh RTT cache asynchronously.
     if (Config::Shared().hasServer && !Config::Shared().server.empty()) {
         asyncSort(nodesWithPort, clientIp);
+        best_node_negotiated_ = Config::Shared().server;
         return Config::Shared().server;
     }
 

@@ -3,6 +3,7 @@
 #include <atomic>
 #include <chrono>
 #include <mutex>
+#include <set>
 #include <unordered_map>
 
 #include "NodeSelector.h"
@@ -109,7 +110,6 @@ public:
 
     Signal::SendRequestFn send_request_fn;
     bff::WebSocket websocket;
-    std::string preferred_node;
     std::string client_ip;
     std::string token;
     std::string last_offer;
@@ -124,6 +124,11 @@ public:
     bool orientation = false;
     bool auto_media_join = true;
     bool join_requested = false;
+    std::atomic_bool join_all_requested{false};
+    std::mutex node_rtts_mtx;
+    NodeSelector::Rtts node_rtts;
+    std::set<int> node_rtts_sent_channels;
+    std::set<int> legacy_node_rtts_channels;
     NodeSelector node_selector;
 };
 
@@ -131,7 +136,7 @@ Signal::Signal() : d_(std::make_shared<Private>(this)) {
     auto d = d_;
     d->node_selector.setUpdateRttsCallback([d](const NodeSelector::Rtts& result) {
         if (!d->owner) return;
-        d->owner->sendNodeRttsToAllChannels(result);
+        d->owner->sendNodeRttsToFirstChannel(result);
     });
 }
 
@@ -246,8 +251,15 @@ void Signal::connectBestUrl(const std::string& serverUrl,
             // Reset connection state, mirroring JsppWebSocket connectServerUrl.
             d->important_reqs.clear();
             d->rtts.clear();
+            {
+                std::lock_guard<std::mutex> lock(d->node_rtts_mtx);
+                d->node_rtts.clear();
+                d->node_rtts_sent_channels.clear();
+                d->legacy_node_rtts_channels.clear();
+            }
             d->last_offer.clear();
             d->auto_media_join = true;
+            d->join_all_requested.store(false);
             d->reconnect_count = 0;
             d->last_code = 0;
 
@@ -260,7 +272,36 @@ void Signal::connectBestUrl(const std::string& serverUrl,
         });
 }
 
-void Signal::sendNodeRttsToAllChannels(const NodeSelector::Rtts& result) {
+void Signal::sendNodeRttsToFirstChannel(const NodeSelector::Rtts& result) {
+    std::vector<int> legacyChannels;
+    {
+        std::lock_guard<std::mutex> lock(d_->node_rtts_mtx);
+        d_->node_rtts = result;
+        d_->node_rtts_sent_channels.clear();
+        legacyChannels.assign(d_->legacy_node_rtts_channels.begin(), d_->legacy_node_rtts_channels.end());
+    }
+
+    // rtts are connection-level; sending on a single channel is enough for the server.
+    int channel = -1;
+    {
+        std::lock_guard<std::mutex> lock(d_->listeners_mtx);
+        if (!d_->listeners.empty()) {
+            channel = d_->listeners.begin()->first;
+        }
+    }
+    if (channel >= 0) {
+        sendCachedNodeRttsIfNeededForChannel(channel);
+    }
+    for (int legacyChannel : legacyChannels) {
+        sendCachedNodeRttsIfNeededForChannel(legacyChannel);
+    }
+}
+
+void Signal::applyNodeRtts(const std::vector<std::pair<std::string, int>>& rtts, bool isSelf) {
+    d_->node_selector.applyNodeRtts(rtts, isSelf);
+}
+
+void Signal::sendNodeRttsForLegacyPeer() {
     std::vector<int> channels;
     {
         std::lock_guard<std::mutex> lock(d_->listeners_mtx);
@@ -269,17 +310,55 @@ void Signal::sendNodeRttsToAllChannels(const NodeSelector::Rtts& result) {
             channels.push_back(kv.first);
         }
     }
+    {
+        std::lock_guard<std::mutex> lock(d_->node_rtts_mtx);
+        for (int channel : channels) {
+            d_->legacy_node_rtts_channels.insert(channel);
+        }
+    }
     for (int channel : channels) {
-        nodeRtts(result, channel);
+        sendCachedNodeRttsIfNeededForChannel(channel);
     }
 }
 
-void Signal::join(const std::string& node, int channel) {
-    d_->preferred_node = node;
+bool Signal::nodeSelected() const {
+    return !d_->node_selector.bestNodeNegotiated().empty();
+}
+
+void Signal::join(int channel) {
+    if (channel < 0) {
+        joinAllChannelsIfNeeded();
+    } else {
+        sendJoin(channel);
+    }
+}
+
+bool Signal::joinAllChannelsIfNeeded() {
+    bool expected = false;
+    if (!d_->join_all_requested.compare_exchange_strong(expected, true)) {
+        return false;
+    }
+    std::vector<int> channels;
+    {
+        std::lock_guard<std::mutex> lock(d_->listeners_mtx);
+        channels.reserve(d_->listeners.size());
+        for (const auto& kv : d_->listeners) {
+            channels.push_back(kv.first);
+        }
+    }
+    for (int ch : channels) {
+        sendJoin(ch);
+    }
+    return true;
+}
+
+void Signal::sendJoin(int channel) {
     d_->join_requested = true;
 
+    // The media node is owned/selected by NodeSelector and shared by all channels.
+    const std::string& node = d_->node_selector.bestNodeNegotiated();
     Rtc__Options join = RTC__OPTIONS__INIT;
-    join.ip = const_cast<char*>(d_->preferred_node.c_str());
+    join.ip = const_cast<char*>(node.c_str());
     join.video_orientation = d_->orientation;
 
     Rtc__SignalRequest req = RTC__SIGNAL_REQUEST__INIT;
@@ -287,6 +366,19 @@ void Signal::join(const std::string& node, int channel) {
     req.message_case = RTC__SIGNAL_REQUEST__MESSAGE_JOIN;
     req.join = &join;
     sendRequest(req, true);
+}
+
+void Signal::sendCachedNodeRttsIfNeededForChannel(int channel) {
+    NodeSelector::Rtts rtts;
+    {
+        std::lock_guard<std::mutex> lock(d_->node_rtts_mtx);
+        if (d_->node_rtts.empty() || d_->node_rtts_sent_channels.find(channel) != d_->node_rtts_sent_channels.end()) {
+            return;
+        }
+        rtts = d_->node_rtts;
+        d_->node_rtts_sent_channels.insert(channel);
+    }
+    nodeRtts(rtts, channel);
 }
 
 void Signal::srtpKey(const std::string& key, Rtc__SrtpProfile profile, int channel) {
@@ -515,12 +607,10 @@ void Signal::handleReceiveSignalResponse(const Rtc__SignalResponse* signalRespon
                     clientIpOwned = d_->client_ip;
                 }
                 const std::string* clientIp = clientIpOwned.empty() ? nullptr : &clientIpOwned;
-                const auto bestNode = d_->node_selector.onNodeList(nodes,
-                                                                 static_cast<uint16_t>(signalResponse->node_list->stun_port),
-                                                                 clientIp);
-                if (!bestNode.empty()) {
-                    d_->preferred_node = bestNode;
-                }
+                // NodeSelector stores the selected node internally for all channels.
+                d_->node_selector.onNodeList(nodes,
+                                             static_cast<uint16_t>(signalResponse->node_list->stun_port),
+                                             clientIp);
             }
             break;
         }

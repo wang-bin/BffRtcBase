@@ -53,8 +53,14 @@ public:
     void connectBestUrl(const std::string& serverUrl,
                         NodeSelector::BestUrlCallback completionHandler);
 
-    // Sender-side APIs (channel-scoped).
-    void join(const std::string& node, int channel);
+    // Connection-level node selection (shared by all channels), backed by NodeSelector.
+    void applyNodeRtts(const std::vector<std::pair<std::string, int>>& rtts, bool isSelf);
+    void sendNodeRttsForLegacyPeer();
+    bool nodeSelected() const;
+
+    // Sender-side APIs (channel-scoped). channel < 0 joins all channels.
+    void join(int channel);
+    bool joinAllChannelsIfNeeded();
     void srtpKey(const std::string& key, Rtc__SrtpProfile profile, int channel);
     void recreate(int channel);
     void offer(const std::string& sdp, int channel);
@@ -77,7 +83,9 @@ private:
     SignalListener* listenerForChannel(int channel) const;
     void enumerateListeners(const std::function<void(int channel, SignalListener*)>& fn) const;
     bool sendRequest(Rtc__SignalRequest& req, bool important = false);
-    void sendNodeRttsToAllChannels(const NodeSelector::Rtts& rtts);
+    void sendJoin(int channel);
+    void sendCachedNodeRttsIfNeededForChannel(int channel);
+    void sendNodeRttsToFirstChannel(const NodeSelector::Rtts& rtts);
 
     static uint32_t timestampMs32();
     static bool parseIceCandidateJson(const std::string& json, IceCandidate* out);

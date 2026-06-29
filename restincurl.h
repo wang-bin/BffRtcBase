@@ -968,7 +968,7 @@ namespace restincurl {
                     if (it != ongoing_.end()) {
                         RESTINCURL_LOG("Finishing request with easy-handle: "
                             << (EasyHandle::handle_t)it->second->GetEasyHandle()
-                            << "; with result: " << m->data.result << " expl: '" << curl_easy_strerror(m->data.result)
+                            << "; with result: " << m->data.result << " error: '" << curl_easy_strerror(m->data.result)
                             << "'; with msg: " << m->msg);
 
                         try {
