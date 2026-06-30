@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <map>
 #include <mutex>
 #include <set>
 #include <unordered_map>
@@ -9,6 +10,8 @@
 #include "NodeSelector.h"
 #include "WebSocket.h"
 #include "json.hpp"
+#include "Log.hpp"
+#define TAG "Signal"
 
 namespace {
 
@@ -62,6 +65,14 @@ static uint32_t portFromUrl(const std::string& url) {
         return static_cast<uint32_t>(std::stoul(s.substr(colon + 1)));
     }
     return 443;
+}
+
+static std::map<std::string, int> nodeRttsByIp(const bff::NodeSelector::Rtts& rtts) {
+    std::map<std::string, int> byIp;
+    for (const auto& kv : rtts) {
+        byIp[kv.first] = kv.second;
+    }
+    return byIp;
 }
 
 } // anonymous namespace
@@ -276,6 +287,10 @@ void Signal::sendNodeRttsToFirstChannel(const NodeSelector::Rtts& result) {
     std::vector<int> legacyChannels;
     {
         std::lock_guard<std::mutex> lock(d_->node_rtts_mtx);
+        if (nodeRttsByIp(d_->node_rtts) == nodeRttsByIp(result)) {
+            LOGD("nodeRtts not changed");
+            return;
+        }
         d_->node_rtts = result;
         d_->node_rtts_sent_channels.clear();
         legacyChannels.assign(d_->legacy_node_rtts_channels.begin(), d_->legacy_node_rtts_channels.end());
