@@ -13,7 +13,7 @@ set(CMAKE_OBJCXX_VISIBILITY_PRESET hidden)
 set(CMAKE_VISIBILITY_INLINES_HIDDEN ON)
 
 add_compile_options(-Oz -gdwarf-5 -g1 -flto=thin -ffunction-sections -fdata-sections -fno-rtti)# -fno-exceptions)
-add_link_options(-Wl,--gc-sections -Wl,--icf=safe)
+add_link_options(-Wl,--gc-sections -Wl,--icf=safe -flto=thin)
 add_definitions(-DJSON_NOEXCEPTION)
 
 add_library(${PROJECT_NAME} MODULE
