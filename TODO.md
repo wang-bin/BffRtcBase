@@ -1,0 +1,2 @@
+- Config, e.g. signal use json instead of binary — done: Signal::setUseJson
+- Location on join — done: Signal::setLocation / clearLocation

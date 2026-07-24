@@ -44,6 +44,15 @@ public:
     void setOrientation(bool orientation);
     bool orientation() const;
 
+    // Optional client location attached to join Options.location.
+    void setLocation(float latitude, float longitude);
+    void clearLocation();
+
+    // When true, SignalRequest/Response are sent/received as JSON text frames
+    // (URL &json=true / JsppRTCConfig.signal.json). Default false = protobuf binary.
+    void setUseJson(bool useJson);
+    bool useJson() const;
+
     // Node selection helpers.
     void updateNodes(const std::vector<std::string>& servers,
                      const std::string* token,

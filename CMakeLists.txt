@@ -24,6 +24,7 @@ add_library(${PROJECT_NAME} MODULE
     laser-ca.der.c
     Log.cpp
     NodeSelector.cpp
+    PbCJson.cpp
     rtc.pb-c.c
     Signal.cpp
     SignalChannel.cpp

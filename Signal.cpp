@@ -4,10 +4,12 @@
 #include <chrono>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <unordered_map>
 
 #include "NodeSelector.h"
+#include "PbCJson.h"
 #include "WebSocket.h"
 #include "json.hpp"
 #include "Log.hpp"
@@ -96,12 +98,20 @@ public:
                 owner->onError(RtcError::SignalFailed);
             }
         });
-        websocket.setOnRecv([this](std::string data, bool) {
-            auto* response = rtc__signal_response__unpack(
-                nullptr,
-                data.size(),
-                reinterpret_cast<const uint8_t*>(data.data()));
+        websocket.setOnRecv([this](std::string data, bool binary) {
+            Rtc__SignalResponse* response = nullptr;
+            if (binary) {
+                response = rtc__signal_response__unpack(
+                    nullptr,
+                    data.size(),
+                    reinterpret_cast<const uint8_t*>(data.data()));
+            } else {
+                auto* msg = messageFromJsonString(&rtc__signal_response__descriptor, data);
+                response = reinterpret_cast<Rtc__SignalResponse*>(msg);
+            }
             if (!response) {
+                LOGW("signal response unpack failed (binary=%d len=%zu)",
+                     binary ? 1 : 0, data.size());
                 return;
             }
             if (owner) {
@@ -133,6 +143,12 @@ public:
     NodeSelector::Hosts hosts_;
     std::string server_url_;
     bool orientation = false;
+    bool use_json = false;
+    struct Location {
+        float latitude = 0.f;
+        float longitude = 0.f;
+    };
+    std::optional<Location> location;
     bool auto_media_join = true;
     bool join_requested = false;
     std::atomic_bool join_all_requested{false};
@@ -233,6 +249,22 @@ void Signal::setOrientation(bool orientation) {
 
 bool Signal::orientation() const {
     return d_->orientation;
+}
+
+void Signal::setLocation(float latitude, float longitude) {
+    d_->location = {latitude, longitude};
+}
+
+void Signal::clearLocation() {
+    d_->location.reset();
+}
+
+void Signal::setUseJson(bool useJson) {
+    d_->use_json = useJson;
+}
+
+bool Signal::useJson() const {
+    return d_->use_json;
 }
 
 void Signal::updateNodes(const std::vector<std::string>& servers,
@@ -375,6 +407,13 @@ void Signal::sendJoin(int channel) {
     Rtc__Options join = RTC__OPTIONS__INIT;
     join.ip = const_cast<char*>(node.c_str());
     join.video_orientation = d_->orientation;
+
+    Rtc__Location loc = RTC__LOCATION__INIT;
+    if (d_->location) {
+        loc.latitude = d_->location->latitude;
+        loc.longitude = d_->location->longitude;
+        join.location = &loc;
+    }
 
     Rtc__SignalRequest req = RTC__SIGNAL_REQUEST__INIT;
     req.channel = static_cast<uint32_t>(channel);
@@ -736,6 +775,15 @@ bool Signal::sendRequest(Rtc__SignalRequest& req, bool important) {
     }
 
     if (d_->websocket.isRunning()) {
+        if (d_->use_json) {
+            std::string payload;
+            if (!messageToJsonString(&req.base, &payload)) {
+                LOGW("signal request toJson failed id=%u channel=%u", req.id, req.channel);
+                return false;
+            }
+            return d_->websocket.send(payload, /*binary=*/false);
+        }
+
         const size_t packedSize = rtc__signal_request__get_packed_size(&req);
         if (packedSize == 0) {
             return false;
@@ -747,7 +795,7 @@ bool Signal::sendRequest(Rtc__SignalRequest& req, bool important) {
         if (wrote != packedSize) {
             return false;
         }
-        return d_->websocket.send(payload, true);
+        return d_->websocket.send(payload, /*binary=*/true);
     }
 
     if (!d_->send_request_fn) {
