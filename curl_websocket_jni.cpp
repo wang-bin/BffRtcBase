@@ -87,10 +87,11 @@ void wireCallbacks(NativeWebSocket *native_ws) {
         });
     });
 
-    native_ws->ws->setOnError([native_ws](int code, std::string error) {
-        callOnNativeThread(native_ws, [native_ws, code, error = std::move(error)](JNIEnv *env) mutable {
-            jmi::LocalRef jerror(error.empty() ? nullptr : jmi::from_string(error, env), env);
-            env->CallVoidMethod(native_ws->java_client, native_ws->mid_error, code, jerror.get<jstring>());
+    native_ws->ws->setOnError([native_ws](bff::WebSocket::Error err) {
+        callOnNativeThread(native_ws, [native_ws, err = std::move(err)](JNIEnv *env) mutable {
+            jmi::LocalRef jerror(err.detail.empty() ? nullptr : jmi::from_string(err.detail, env), env);
+            env->CallVoidMethod(native_ws->java_client, native_ws->mid_error, err.curlCode,
+                                jerror.get<jstring>());
         });
     });
 }

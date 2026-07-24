@@ -109,27 +109,27 @@ public:
                 owner->onReconnect();
             }
         });
-        websocket.setOnError([this](int code, std::string) {
+        websocket.setOnError([this](WebSocket::Error err) {
             if (!owner) {
                 return;
             }
             // Match JsppWebSocket didFailWithError (+ SRWebSocketCurl curl→NSError mapping):
             // timeout / bad URL → SignalFailed (fan-out); SSL → SSL (fan-out);
             // connect/resolve (EHOSTDOWN) and other errors → no onError (ObjC reconnects).
-            if (IsCurlSecError(code)) {
+            if (IsCurlSecError(err.curlCode)) {
                 owner->onError(RtcError::SSL);
                 return;
             }
 #if defined(LIBCURL_VERSION_MAJOR)
-            if (code == CURLE_OPERATION_TIMEDOUT) {
+            if (err.curlCode == CURLE_OPERATION_TIMEDOUT) {
                 owner->onError(RtcError::SignalFailed);
                 return;
             }
-            if (code == CURLE_COULDNT_CONNECT || code == CURLE_COULDNT_RESOLVE_HOST) {
+            if (err.curlCode == CURLE_COULDNT_CONNECT || err.curlCode == CURLE_COULDNT_RESOLVE_HOST) {
                 return;
             }
 #endif
-            if (code == static_cast<int>(WebSocket::CloseCode::NeverConnected)) {
+            if (err.curlCode == static_cast<int>(WebSocket::CloseCode::NeverConnected)) {
                 owner->onError(RtcError::SignalFailed);
                 return;
             }

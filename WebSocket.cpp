@@ -299,19 +299,30 @@ public:
         return bytes;
     }
 
-    void fireError(const int code, const std::string& err) {
-        DBG("onError. code=%d, err=%s", code, err.c_str());
+    void fireError(Error err) {
+        DBG("onError. curl=%d http=%d detail=%s", err.curlCode, err.httpCode, err.detail.c_str());
         bool expected = false;
         if (!error_reported.compare_exchange_strong(expected, true)) {
             return;
         }
         // SRWebSocket: didFailWithError and didCloseWithCode are mutually exclusive.
         close_called = true;
-        last_error_code = code;
-        last_error = err;
+        last_error_code = err.curlCode;
+        last_error = err.detail;
         if (on_error) {
-            on_error(code, err);
+            on_error(std::move(err));
         }
+    }
+
+    static int httpResponseCode(CURL *e) {
+        if (!e) {
+            return 0;
+        }
+        long http_code = 0;
+        if (curl_easy_getinfo(e, CURLINFO_RESPONSE_CODE, &http_code) != CURLE_OK) {
+            return 0;
+        }
+        return static_cast<int>(http_code);
     }
 
     void fireClose(WebSocket::CloseCode code, const std::string& reason, bool remote) {
@@ -352,7 +363,11 @@ public:
                 return false;
             }
 
-            fireError(static_cast<int>(rc), curl_easy_strerror(rc));
+            fireError(Error{
+                .curlCode = static_cast<int>(rc),
+                .httpCode = httpResponseCode(e),
+                .detail = curl_easy_strerror(rc),
+            });
             fatal = true;
             return false;
         }
@@ -488,7 +503,10 @@ bool WebSocket::open(const OpenOptions& options) {
         if (!easy) {
             d->running.store(false);
             d->state.store(WebSocket::State::Closed);
-            d->fireError(std::to_underlying(CloseCode::NeverConnected), "curl_easy_init failed");
+            d->fireError(Error{
+                .curlCode = std::to_underlying(CloseCode::NeverConnected),
+                .detail = "curl_easy_init failed",
+            });
             return;
         }
 
@@ -530,7 +548,10 @@ bool WebSocket::open(const OpenOptions& options) {
             d->running.store(false);
             d->state.store(WebSocket::State::Closed);
             d->easy.store(nullptr, std::memory_order_release);
-            d->fireError(std::to_underlying(CloseCode::NeverConnected), "curl_multi_init failed");
+            d->fireError(Error{
+                .curlCode = std::to_underlying(CloseCode::NeverConnected),
+                .detail = "curl_multi_init failed",
+            });
             curl_easy_cleanup(easy);
             if (header_list) {
                 curl_slist_free_all(header_list);
@@ -549,7 +570,10 @@ bool WebSocket::open(const OpenOptions& options) {
             d->running.store(false);
             d->state.store(WebSocket::State::Closed);
             d->easy.store(nullptr, std::memory_order_release);
-            d->fireError(static_cast<int>(mc), curl_multi_strerror(mc));
+            d->fireError(Error{
+                .curlCode = static_cast<int>(mc),
+                .detail = curl_multi_strerror(mc),
+            });
             curl_easy_cleanup(easy);
             if (header_list) {
                 curl_slist_free_all(header_list);
@@ -561,11 +585,16 @@ bool WebSocket::open(const OpenOptions& options) {
         }
 
         CURLcode rc = CURLE_OK;
+        int http_code = 0;
         int still_running = 1;
         while (!d->abort.load() && still_running) {
             mc = curl_multi_perform(multi, &still_running);
             if (mc != CURLM_OK) {
-                d->fireError(static_cast<int>(mc), curl_multi_strerror(mc));
+                d->fireError(Error{
+                    .curlCode = static_cast<int>(mc),
+                    .httpCode = d->httpResponseCode(easy),
+                    .detail = curl_multi_strerror(mc),
+                });
                 break;
             }
 
@@ -575,6 +604,7 @@ bool WebSocket::open(const OpenOptions& options) {
             while (CURLMsg *msg = curl_multi_info_read(multi, &msgs_left)) {
                 if (msg->msg == CURLMSG_DONE && msg->easy_handle == easy) {
                     rc = msg->data.result;
+                    http_code = d->httpResponseCode(easy);
                     still_running = 0;
                     break;
                 }
@@ -609,7 +639,11 @@ bool WebSocket::open(const OpenOptions& options) {
             mc = curl_multi_poll(multi, use_wake_pipe ? &extra : nullptr,
                                  use_wake_pipe ? 1u : 0u, timeout_ms, &numfds);
             if (mc != CURLM_OK) {
-                d->fireError(static_cast<int>(mc), curl_multi_strerror(mc));
+                d->fireError(Error{
+                    .curlCode = static_cast<int>(mc),
+                    .httpCode = d->httpResponseCode(easy),
+                    .detail = curl_multi_strerror(mc),
+                });
                 break;
             }
             if (use_wake_pipe && (extra.revents & CURL_WAIT_POLLIN)) {
@@ -620,6 +654,10 @@ bool WebSocket::open(const OpenOptions& options) {
 
         d->flushSendQueue(easy);
 
+        if (http_code == 0) {
+            http_code = d->httpResponseCode(easy);
+        }
+
         curl_multi_remove_handle(multi, easy);
         d->multi.store(nullptr, std::memory_order_release);
         curl_multi_cleanup(multi);
@@ -628,7 +666,11 @@ bool WebSocket::open(const OpenOptions& options) {
         d->running.store(false);
 
         if (!d->abort.load() && rc != CURLE_OK) {
-            d->fireError(static_cast<int>(rc), curl_easy_strerror(rc));
+            d->fireError(Error{
+                .curlCode = static_cast<int>(rc),
+                .httpCode = http_code,
+                .detail = curl_easy_strerror(rc),
+            });
         } else if (!d->close_called && !d->error_reported.load()) {
             if (d->local_close_requested) {
                 d->fireClose(d->local_close_code, d->local_close_reason, false);

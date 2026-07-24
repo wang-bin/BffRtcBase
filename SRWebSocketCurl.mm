@@ -287,19 +287,21 @@ static bff::WebSocket::OpenOptions OptionsFromRequest(NSURLRequest *request, SRS
         }];
     });
 
-    _ws->setOnError([weakSelf](int code, std::string error) {
+    _ws->setOnError([weakSelf](bff::WebSocket::Error error) {
         __strong typeof(weakSelf) strongSelf = weakSelf;
         if (!strongSelf) {
             return;
         }
-        NSString *message = StdStringToNSString(error);
+        NSString *message = StdStringToNSString(error.detail);
+        const int curlCode = error.curlCode;
+        const int httpCode = error.httpCode;
         [strongSelf performDelegate:^{
             [strongSelf setCurlReadyState:SR_CLOSED];
             id<SRWebSocketDelegate> delegate = strongSelf.delegate;
             if ([delegate respondsToSelector:@selector(webSocket:didFailWithError:)]) {
-                NSInteger nsCode = code;
+                NSInteger nsCode = curlCode;
 #ifdef LIBCURL_VERSION_MAJOR
-                switch (code) {
+                switch (curlCode) {
                 case CURLE_COULDNT_CONNECT:
                 case CURLE_COULDNT_RESOLVE_HOST:
                     nsCode = EHOSTDOWN;
@@ -310,13 +312,21 @@ static bff::WebSocket::OpenOptions OptionsFromRequest(NSURLRequest *request, SRS
                 default:
                     break;
                 }
-                if (bff::IsCurlSecError(code)) {
+                if (bff::IsCurlSecError(curlCode)) {
                     nsCode = NSURLErrorClientCertificateRejected;
                 }
 #endif
+                NSMutableDictionary *userInfo = [NSMutableDictionary dictionary];
+                userInfo[NSLocalizedDescriptionKey] = message ?: @"WebSocket error";
+                if (httpCode > 0) {
+                    userInfo[@"HTTPResponseStatusCode"] = @(httpCode);
+                }
+                if (curlCode != 0) {
+                    userInfo[@"curlCode"] = @(curlCode);
+                }
                 NSError *err = [NSError errorWithDomain:SRWebSocketCurlErrorDomain
                                                    code:nsCode
-                                               userInfo:@{NSLocalizedDescriptionKey: message ?: @"WebSocket error"}];
+                                               userInfo:userInfo];
                 [delegate webSocket:strongSelf didFailWithError:err];
             }
         }];

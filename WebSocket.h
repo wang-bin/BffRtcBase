@@ -66,6 +66,12 @@ public:
         FlashPolicy = -3,
     };
 
+    struct Error {
+        int curlCode = 0;
+        int httpCode = 0;
+        std::string detail;
+    };
+
     using on_open_fn_t = std::function<void()>;
     /*
     Called after the websocket connection has been closed.
@@ -75,7 +81,7 @@ reason – Additional information string
 remote – Returns whether or not the closing of the connection was initiated by the remote host.
     */
     using on_close_fn_t = std::function<void(CloseCode code, std::string reason, bool remote)>;
-    using on_error_fn_t = std::function<void(int code, std::string error)>;
+    using on_error_fn_t = std::function<void(Error error)>;
     using on_recv_fn_t = std::function<void(std::string data, bool binary)>;
 
     WebSocket();
