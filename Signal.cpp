@@ -10,10 +10,16 @@
 
 #include "NodeSelector.h"
 #include "PbCJson.h"
+#include "SniUrl.h"
 #include "WebSocket.h"
 #include "json.hpp"
 #include "Log.hpp"
 #define TAG "Signal"
+
+#if __has_include(<curl/curl.h>)
+#include <curl/curl.h>
+#endif
+
 
 namespace {
 
@@ -87,16 +93,46 @@ public:
         websocket.setOnOpen([this]() {
             state_string = "open";
         });
-        websocket.setOnClose([this](WebSocket::CloseCode, std::string, bool remote) {
+        websocket.setOnClose([this](WebSocket::CloseCode code, std::string, bool remote) {
             state_string = "closed";
-            if (remote && owner) {
+            if (!owner) {
+                return;
+            }
+            // Match JsppWebSocket didCloseWithCode: 602/603 → Token (all channels), no reconnect.
+            const int closeCode = static_cast<int>(code);
+            if (closeCode == 602 || closeCode == 603) {
+                owner->onError(RtcError::Token);
+                return;
+            }
+            if (remote) {
                 owner->onReconnect();
             }
         });
-        websocket.setOnError([this](int, std::string) {
-            if (owner) {
-                owner->onError(RtcError::SignalFailed);
+        websocket.setOnError([this](int code, std::string) {
+            if (!owner) {
+                return;
             }
+            // Match JsppWebSocket didFailWithError (+ SRWebSocketCurl curl→NSError mapping):
+            // timeout / bad URL → SignalFailed (fan-out); SSL → SSL (fan-out);
+            // connect/resolve (EHOSTDOWN) and other errors → no onError (ObjC reconnects).
+            if (IsCurlSecError(code)) {
+                owner->onError(RtcError::SSL);
+                return;
+            }
+#if defined(LIBCURL_VERSION_MAJOR)
+            if (code == CURLE_OPERATION_TIMEDOUT) {
+                owner->onError(RtcError::SignalFailed);
+                return;
+            }
+            if (code == CURLE_COULDNT_CONNECT || code == CURLE_COULDNT_RESOLVE_HOST) {
+                return;
+            }
+#endif
+            if (code == static_cast<int>(WebSocket::CloseCode::NeverConnected)) {
+                owner->onError(RtcError::SignalFailed);
+                return;
+            }
+            // Generic transport failure: ObjC reconnects without onError.
         });
         websocket.setOnRecv([this](std::string data, bool binary) {
             Rtc__SignalResponse* response = nullptr;
@@ -703,12 +739,18 @@ void Signal::handleReceiveSignalResponse(const Rtc__SignalResponse* signalRespon
             if (signalResponse->response) {
                 d_->last_code = static_cast<int>(signalResponse->response->code);
                 if (d_->last_code != 200) {
+                    // Match ObjC: notify only this channel's listener (not fan-out).
+                    // Socket close on these errors is deferred (parity backlog).
                     if (d_->last_code == 602 || d_->last_code == 603) {
-                        if (listener) listener->onError(RtcError::Token);
+                        if (listener) {
+                            listener->onError(RtcError::Token);
+                        }
                         return;
                     }
                     if (d_->important_reqs.erase(signalResponse->id) > 0) {
-                        if (listener) listener->onError(RtcError::SignalFailed);
+                        if (listener) {
+                            listener->onError(RtcError::SignalFailed);
+                        }
                         return;
                     }
                     resetReconn = false;
@@ -741,6 +783,7 @@ void Signal::onReconnect() {
 }
 
 void Signal::onError(RtcError error) {
+    // Connection-level errors: fan-out to all channels.
     enumerateListeners([&](int, SignalListener* listener) {
         listener->onError(error);
     });
