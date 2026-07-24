@@ -8,6 +8,7 @@
 #if __has_include(<curl/curl.h>)
 #include "restincurl.h"
 #endif
+#include <mutex>
 #include <vector>
 #include <zlib.h>
 
@@ -15,6 +16,56 @@
 // TODO: HOST header, cert selected, response headers
 
 using namespace std;
+
+namespace {
+
+std::mutex g_auth_token_mtx;
+std::string g_auth_token;
+
+// Replace existing token= query value; leave URL unchanged if no token= present.
+std::string replaceTokenQuery(const std::string& url, const std::string& token) {
+    if (token.empty()) {
+        return url;
+    }
+    const std::string key = "token=";
+    size_t pos = std::string::npos;
+    for (size_t i = 0; i + key.size() <= url.size(); ++i) {
+        if ((url[i] == '?' || url[i] == '&') && url.compare(i + 1, key.size(), key) == 0) {
+            pos = i + 1;
+            break;
+        }
+    }
+    if (pos == std::string::npos) {
+        return url;
+    }
+    const size_t valueStart = pos + key.size();
+    size_t valueEnd = url.find('&', valueStart);
+    if (valueEnd == std::string::npos) {
+        valueEnd = url.size();
+    }
+    return url.substr(0, valueStart) + token + url.substr(valueEnd);
+}
+
+} // namespace
+
+void HttpClient::setAuthToken(std::string token) {
+    std::lock_guard<std::mutex> lock(g_auth_token_mtx);
+    g_auth_token = std::move(token);
+}
+
+std::string HttpClient::authToken() {
+    std::lock_guard<std::mutex> lock(g_auth_token_mtx);
+    return g_auth_token;
+}
+
+std::string HttpClient::urlWithAuthToken(const std::string& url) {
+    std::string token;
+    {
+        std::lock_guard<std::mutex> lock(g_auth_token_mtx);
+        token = g_auth_token;
+    }
+    return replaceTokenQuery(url, token);
+}
 
 #ifdef LIBCURL_VERSION_MAJOR
 static CURLcode ssl_ctx_callback(CURL* curl, void* ssl_ctx, void* userdata) {
@@ -70,7 +121,8 @@ public:
 
     template<typename StartRequest>
     void execute(const string& url, StartRequest&& startRequest, CompletionCallback&& cb) {
-        const auto prepared = bff::prepare_url_for_sni(url, sni);
+        const auto urlAuthed = HttpClient::urlWithAuthToken(url);
+        const auto prepared = bff::prepare_url_for_sni(urlAuthed, sni);
         curl_slist *resolve_list = nullptr;
         if (!prepared.resolve.empty()) {
             resolve_list = curl_slist_append(nullptr, prepared.resolve.c_str());

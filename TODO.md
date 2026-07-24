@@ -1,3 +1,4 @@
 - Config, e.g. signal use json instead of binary — done: Signal::setUseJson
 - Location on join — done: Signal::setLocation / clearLocation
 - onError scope — done: match ObjC (Response per-channel; WS close 602/603 / fail SSL|timeout fan-out)
+- Token refresh — done: SignalResponse.token → HttpClient::setAuthToken; connect rewrites URL

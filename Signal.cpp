@@ -10,6 +10,7 @@
 
 #include "NodeSelector.h"
 #include "PbCJson.h"
+#include "HttpClient.h"
 #include "SniUrl.h"
 #include "WebSocket.h"
 #include "json.hpp"
@@ -212,8 +213,13 @@ void Signal::setSendRequestFn(SendRequestFn sendFn) {
 }
 
 bool Signal::connect(const std::string& url) {
+    d_->server_url_ = url;
     d_->state_string = "connecting";
-    return d_->websocket.open(url);
+    // Match JsppWebSocket connect: rewrite token= query with refreshed token.
+    if (!d_->token.empty()) {
+        HttpClient::setAuthToken(d_->token);
+    }
+    return d_->websocket.open(HttpClient::urlWithAuthToken(url));
 }
 
 void Signal::disconnect() {
@@ -763,7 +769,9 @@ void Signal::handleReceiveSignalResponse(const Rtc__SignalResponse* signalRespon
             }
             break;
         case RTC__SIGNAL_RESPONSE__MESSAGE_TOKEN:
+            // Match ObjC: store token and push to HTTP client for subsequent requests.
             d_->token = signalResponse->token ? signalResponse->token : "";
+            HttpClient::setAuthToken(d_->token);
             break;
         default:
             break;

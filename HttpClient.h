@@ -22,6 +22,12 @@ public:
     HttpClient();
     ~HttpClient();
 
+    // Shared auth token for HTTP (mirrors JsppHTTPClient.token / Android HttpHelper).
+    // When set, request URLs that already contain a `token=` query param are rewritten.
+    static void setAuthToken(std::string token);
+    static std::string authToken();
+    static std::string urlWithAuthToken(const std::string& url);
+
     HttpClient& header(const std::string& name, const std::string& value);
     HttpClient& sni(const std::string& host);
     HttpClient& setConnectTimeout(int ms);
