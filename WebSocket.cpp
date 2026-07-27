@@ -196,6 +196,18 @@ public:
         }
     }
 
+    static bool isWsUpgraded(CURL *e) {
+        if (!e) {
+            return false;
+        }
+        long http_code = 0;
+        if (curl_easy_getinfo(e, CURLINFO_RESPONSE_CODE, &http_code) != CURLE_OK) {
+            return false;
+        }
+        // HTTP 101 Switching Protocols — WebSocket handshake accepted.
+        return http_code == 101;
+    }
+
     static int xferinfo_cb(void *clientp,
                            curl_off_t /*dltotal*/, curl_off_t /*dlnow*/,
                            curl_off_t /*ultotal*/, curl_off_t /*ulnow*/) {
@@ -204,7 +216,8 @@ public:
         if (!ud || !ud->self) {
             return 0;
         }
-        if (ud->easy) {
+        // RESPONSE_CODE becomes 101 only after successful WS upgrade — not during TCP/TLS/HTTP.
+        if (ud->easy && isWsUpgraded(ud->easy)) {
             ud->self->notifyOpen();
         }
         return ud->self->abort.load() ? 1 : 0;
@@ -227,6 +240,7 @@ public:
             return bytes;
         }
 
+        // Fallback if xferinfo did not see 101 yet (first inbound frame implies upgrade).
         ud->self->notifyOpen();
 
         // ignore ping/pong here (autopong by default)
@@ -314,8 +328,9 @@ public:
         }
     }
 
-    static int httpResponseCode(CURL *e) {
-        if (!e) {
+    // Only meaningful before WS upgrade; after open this is stale (usually 101).
+    int handshakeHttpCode(CURL *e) const {
+        if (!e || open_notified.load(std::memory_order_acquire)) {
             return 0;
         }
         long http_code = 0;
@@ -365,7 +380,7 @@ public:
 
             fireError(Error{
                 .curlCode = static_cast<int>(rc),
-                .httpCode = httpResponseCode(e),
+                .httpCode = handshakeHttpCode(e),
                 .detail = curl_easy_strerror(rc),
             });
             fatal = true;
@@ -592,7 +607,7 @@ bool WebSocket::open(const OpenOptions& options) {
             if (mc != CURLM_OK) {
                 d->fireError(Error{
                     .curlCode = static_cast<int>(mc),
-                    .httpCode = d->httpResponseCode(easy),
+                    .httpCode = d->handshakeHttpCode(easy),
                     .detail = curl_multi_strerror(mc),
                 });
                 break;
@@ -604,7 +619,7 @@ bool WebSocket::open(const OpenOptions& options) {
             while (CURLMsg *msg = curl_multi_info_read(multi, &msgs_left)) {
                 if (msg->msg == CURLMSG_DONE && msg->easy_handle == easy) {
                     rc = msg->data.result;
-                    http_code = d->httpResponseCode(easy);
+                    http_code = d->handshakeHttpCode(easy);
                     still_running = 0;
                     break;
                 }
@@ -641,7 +656,7 @@ bool WebSocket::open(const OpenOptions& options) {
             if (mc != CURLM_OK) {
                 d->fireError(Error{
                     .curlCode = static_cast<int>(mc),
-                    .httpCode = d->httpResponseCode(easy),
+                    .httpCode = d->handshakeHttpCode(easy),
                     .detail = curl_multi_strerror(mc),
                 });
                 break;
@@ -655,7 +670,7 @@ bool WebSocket::open(const OpenOptions& options) {
         d->flushSendQueue(easy);
 
         if (http_code == 0) {
-            http_code = d->httpResponseCode(easy);
+            http_code = d->handshakeHttpCode(easy);
         }
 
         curl_multi_remove_handle(multi, easy);
