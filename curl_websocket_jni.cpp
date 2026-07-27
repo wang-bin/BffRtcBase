@@ -39,7 +39,7 @@ void cacheMethodIds(JNIEnv *env, NativeWebSocket *native_ws) {
     native_ws->mid_open = env->GetMethodID(cls, "dispatchOpen", "()V");
     native_ws->mid_message = env->GetMethodID(cls, "dispatchMessage", "([BZ)V");
     native_ws->mid_close = env->GetMethodID(cls, "dispatchClose", "(ILjava/lang/String;Z)V");
-    native_ws->mid_error = env->GetMethodID(cls, "dispatchError", "(ILjava/lang/String;)V");
+    native_ws->mid_error = env->GetMethodID(cls, "dispatchError", "(IILjava/lang/String;)V");
     env->DeleteLocalRef(cls);
 }
 
@@ -90,7 +90,7 @@ void wireCallbacks(NativeWebSocket *native_ws) {
     native_ws->ws->setOnError([native_ws](bff::WebSocket::Error err) {
         callOnNativeThread(native_ws, [native_ws, err = std::move(err)](JNIEnv *env) mutable {
             jmi::LocalRef jerror(err.detail.empty() ? nullptr : jmi::from_string(err.detail, env), env);
-            env->CallVoidMethod(native_ws->java_client, native_ws->mid_error, err.curlCode,
+            env->CallVoidMethod(native_ws->java_client, native_ws->mid_error, err.curlCode, err.httpCode,
                                 jerror.get<jstring>());
         });
     });
