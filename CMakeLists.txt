@@ -16,6 +16,19 @@ add_compile_options(-Oz -gdwarf-5 -g1 -flto=thin -ffunction-sections -fdata-sect
 add_link_options(-Wl,--gc-sections -Wl,--icf=safe -flto=thin)
 add_definitions(-DJSON_NOEXCEPTION)
 
+# libev backends (epoll/kqueue/...) are #included by ev.c — do not compile them separately
+add_library(libev OBJECT
+    libev/ev.c
+)
+target_include_directories(libev PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/libev)
+
+add_library(quic OBJECT
+    quic/src/conn.cc
+    quic/src/listener.cc
+    quic/src/socket.cc
+)
+target_include_directories(quic PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/quic/include)
+
 add_library(${PROJECT_NAME} MODULE
     protobuf-c/protobuf-c.c
     Cert.cpp
@@ -33,7 +46,7 @@ add_library(${PROJECT_NAME} MODULE
     WebSocket.cpp
 )
 #set_target_properties(${PROJECT_NAME} PROPERTIES INTERPROCEDURAL_OPTIMIZATION ON) # CMAKE_ANDROID_NDK_VERSION not defined, will use gold linker
-target_link_libraries(${PROJECT_NAME} PRIVATE z)
+target_link_libraries(${PROJECT_NAME} PRIVATE libev quic z)
 if(ANDROID)
   target_link_libraries(${PROJECT_NAME} PRIVATE log)
   include_directories(JMI)
@@ -48,6 +61,6 @@ if(ANDROID)
   if(EXISTS ${LIBS_DIR}/include)
     include_directories(${LIBS_DIR}/include)
     target_link_directories(${PROJECT_NAME} PRIVATE ${LIBS_DIR}/${CMAKE_ANDROID_ARCH_ABI})
-    target_link_libraries(${PROJECT_NAME} PRIVATE curl ssl crypto)
+    target_link_libraries(${PROJECT_NAME} PRIVATE curl ssl crypto ngtcp2)
   endif()
 endif()
