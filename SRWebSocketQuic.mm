@@ -489,17 +489,22 @@ std::string BuildPathAndQuery(NSURL *url)
         [strongSelf failWithError:err closeSocket:NO];
     });
 
-    _socket->onClose([weakSelf](uint64_t conn_id) {
+    _socket->onClose([weakSelf](uint64_t conn_id, quic::Error error) {
         (void)conn_id;
         __strong typeof(weakSelf) strongSelf = weakSelf;
         if (!strongSelf) {
             return;
         }
+        NSString *reason = StdStringToNSString(error.reason);
+        if (!reason.length) {
+            reason = [NSString stringWithFormat:@"quic error kind=%u code=%llu",
+                               (unsigned)error.kind, error.code];
+        }
         [strongSelf performDelegate:^{
             [strongSelf setQuicReadyState:SR_CLOSED];
             id<SRWebSocketDelegate> delegate = strongSelf.delegate;
             if ([delegate respondsToSelector:@selector(webSocket:didCloseWithCode:reason:wasClean:)]) {
-                [delegate webSocket:strongSelf didCloseWithCode:SRStatusCodeNormal reason:nil wasClean:YES];
+                [delegate webSocket:strongSelf didCloseWithCode:SRStatusCodeNormal reason:reason wasClean:YES];
             }
         }];
     });

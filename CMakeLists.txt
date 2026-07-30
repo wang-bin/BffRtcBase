@@ -27,7 +27,10 @@ add_library(quic OBJECT
     quic/src/listener.cc
     quic/src/socket.cc
 )
-target_include_directories(quic PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/quic/include)
+target_include_directories(quic PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/quic/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/libev
+)
 
 add_library(${PROJECT_NAME} MODULE
     protobuf-c/protobuf-c.c
@@ -54,6 +57,7 @@ if(ANDROID)
     stun_test.cpp
     stun_jni.cpp
     curl_websocket_jni.cpp
+    quic_websocket_jni.cpp
     curl_http_jni.cpp
     jmi.cpp
   )
@@ -61,6 +65,6 @@ if(ANDROID)
   if(EXISTS ${LIBS_DIR}/include)
     include_directories(${LIBS_DIR}/include)
     target_link_directories(${PROJECT_NAME} PRIVATE ${LIBS_DIR}/${CMAKE_ANDROID_ARCH_ABI})
-    target_link_libraries(${PROJECT_NAME} PRIVATE curl ssl crypto ngtcp2)
+    target_link_libraries(${PROJECT_NAME} PRIVATE curl ssl crypto ngtcp2 ngtcp2_crypto_boringssl)
   endif()
 endif()
