@@ -12,8 +12,13 @@ set(CMAKE_OBJC_VISIBILITY_PRESET hidden)
 set(CMAKE_OBJCXX_VISIBILITY_PRESET hidden)
 set(CMAKE_VISIBILITY_INLINES_HIDDEN ON)
 
-add_compile_options(-Oz -gdwarf-5 -g1 -flto=thin -ffunction-sections -fdata-sections -fno-rtti)# -fno-exceptions)
-add_link_options(-Wl,--gc-sections -Wl,--icf=safe -flto=thin)
+include(xcfwk.cmake)
+
+add_compile_options(-Oz -gdwarf-5 -g1 -flto=thin -fno-rtti)# -fno-exceptions)
+if(ANDROID)
+  add_compile_options(-ffunction-sections -fdata-sections)
+  add_link_options(-Wl,--gc-sections -Wl,--icf=safe -flto=thin)
+endif()
 add_definitions(-DJSON_NOEXCEPTION)
 
 # libev backends (epoll/kqueue/...) are #included by ev.c — do not compile them separately
@@ -50,7 +55,10 @@ add_library(${PROJECT_NAME} MODULE
 )
 #set_target_properties(${PROJECT_NAME} PROPERTIES INTERPROCEDURAL_OPTIMIZATION ON) # CMAKE_ANDROID_NDK_VERSION not defined, will use gold linker
 target_link_libraries(${PROJECT_NAME} PRIVATE libev quic z)
+
+
 if(ANDROID)
+  set(LIBS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../../libs)
   target_link_libraries(${PROJECT_NAME} PRIVATE log)
   include_directories(JMI)
   target_sources(${PROJECT_NAME} PRIVATE
@@ -61,10 +69,23 @@ if(ANDROID)
     curl_http_jni.cpp
     jmi.cpp
   )
-  set(LIBS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../../libs)
   if(EXISTS ${LIBS_DIR}/include)
     include_directories(${LIBS_DIR}/include)
     target_link_directories(${PROJECT_NAME} PRIVATE ${LIBS_DIR}/${CMAKE_ANDROID_ARCH_ABI})
     target_link_libraries(${PROJECT_NAME} PRIVATE curl ssl crypto ngtcp2 ngtcp2_crypto_boringssl)
   endif()
+endif()
+if(IOS)
+  set(LIBS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../libs)
+  message(STATUS "LIBS_DIR: ${LIBS_DIR}")
+  find_library(OPENSSL NAMES openssl PATHS "${LIBS_DIR}" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
+  find_library(NGTCP2 NAMES ngtcp2 PATHS "${LIBS_DIR}" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
+  find_library(CURL NAMES curl PATHS "${LIBS_DIR}" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
+  find_xcframework(OPENSSL_XCFW "${OPENSSL}")
+  find_xcframework(NGTCP2_XCFW "${NGTCP2}")
+  find_xcframework(CURL_XCFW "${CURL}")
+  target_compile_options(quic PRIVATE "${OPENSSL_XCFW_CFLAGS}" "${NGTCP2_XCFW_CFLAGS}" "${CURL_XCFW_CFLAGS}")
+  target_compile_options(${PROJECT_NAME} PRIVATE "${CURL_XCFW_CFLAGS}" "${OPENSSL_XCFW_CFLAGS}")
+  target_link_libraries(quic PUBLIC "${OPENSSL_XCFW_LFLAGS}" "${NGTCP2_XCFW_LFLAGS}" "${CURL_XCFW_LFLAGS}")
+  target_link_libraries(${PROJECT_NAME} PRIVATE "${CURL_XCFW_LFLAGS}" "${OPENSSL_XCFW_LFLAGS}")
 endif()
