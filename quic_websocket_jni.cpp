@@ -414,7 +414,32 @@ void handleDataFramesLocked(NativeQuicWebSocket *native_ws) {
   }
 }
 
+bool sendRaw(NativeQuicWebSocket *native_ws, std::span<const uint8_t> bytes);
+bool sendFramed(NativeQuicWebSocket *native_ws,
+                std::span<const uint8_t> payload);
+
 void wireCallbacks(NativeQuicWebSocket *native_ws) {
+  native_ws->socket->onOpenStream(
+      [native_ws](uint64_t /*conn_id*/, int64_t stream_id, quic::Dir /*dir*/) {
+        if (native_ws->stream_id != quic::kInvalidStream) {
+          return true;
+        }
+        native_ws->stream_id = stream_id;
+        const uint8_t marker = 0x35;
+        if (!sendRaw(native_ws, std::span<const uint8_t>(&marker, 1))) {
+          fail(native_ws, QuicWsError::SendFailed, "quic send failed", 0, true);
+          return false;
+        }
+        const auto params_bytes = std::span<const uint8_t>(
+            reinterpret_cast<const uint8_t *>(native_ws->params.data()),
+            native_ws->params.size());
+        if (!sendFramed(native_ws, params_bytes)) {
+          fail(native_ws, QuicWsError::SendFailed, "quic send failed", 0, true);
+          return false;
+        }
+        return true;
+      });
+
   native_ws->socket->onRecv(
       [native_ws](uint64_t /*conn_id*/, int64_t /*stream_id*/,
                   std::span<const uint8_t> data, bool /*fin*/) {
@@ -565,23 +590,9 @@ QUICWS_JNI(jboolean, nativeOpen, jlong handle, jstring url) {
     return JNI_FALSE;
   }
 
-  native_ws->stream_id = native_ws->socket->openStream();
-  if (native_ws->stream_id == quic::kInvalidStream) {
+  if (native_ws->socket->openStream() != quic::Ok) {
     fail(native_ws, QuicWsError::OpenStreamFailed, "open quic stream failed", 0,
          true);
-    return JNI_FALSE;
-  }
-
-  const uint8_t marker = 0x35;
-  if (!sendRaw(native_ws, std::span<const uint8_t>(&marker, 1))) {
-    fail(native_ws, QuicWsError::SendFailed, "quic send failed", 0, true);
-    return JNI_FALSE;
-  }
-  const auto params_bytes = std::span<const uint8_t>(
-      reinterpret_cast<const uint8_t *>(native_ws->params.data()),
-      native_ws->params.size());
-  if (!sendFramed(native_ws, params_bytes)) {
-    fail(native_ws, QuicWsError::SendFailed, "quic send failed", 0, true);
     return JNI_FALSE;
   }
   return JNI_TRUE;

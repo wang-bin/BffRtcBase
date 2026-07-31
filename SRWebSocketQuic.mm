@@ -457,6 +457,31 @@ std::string BuildPathAndQuery(NSURL *url)
     }
 
     __weak typeof(self) weakSelf = self;
+    _socket->onOpenStream([weakSelf](uint64_t conn_id, int64_t stream_id, quic::Dir dir) {
+        (void)conn_id;
+        (void)dir;
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        if (!strongSelf || strongSelf->_streamId != quic::kInvalidStream) {
+            return true;
+        }
+        strongSelf->_streamId = stream_id;
+
+        NSError *sendError = nil;
+        const uint8_t marker = 0x35;
+        if (![strongSelf sendRawBytes:&marker length:1 error:&sendError]) {
+            [strongSelf failWithError:sendError closeSocket:YES];
+            return false;
+        }
+        const auto paramsBytes = std::span<const uint8_t>(
+            reinterpret_cast<const uint8_t *>(strongSelf->_params.data()),
+            strongSelf->_params.size());
+        if (![strongSelf sendFramedPayload:paramsBytes error:&sendError]) {
+            [strongSelf failWithError:sendError closeSocket:YES];
+            return false;
+        }
+        return true;
+    });
+
     _socket->onRecv([weakSelf](uint64_t conn_id, int64_t stream_id, std::span<const uint8_t> data, bool fin) {
         (void)conn_id;
         (void)stream_id;
@@ -534,24 +559,10 @@ std::string BuildPathAndQuery(NSURL *url)
         return;
     }
 
-    _streamId = _socket->openStream();
-    if (_streamId == quic::kInvalidStream) {
+    if (_socket->openStream() != quic::Ok) {
         [self failWithError:[self makeError:SRWebSocketQuicErrorOpenStreamFailed description:@"open quic stream failed"]
                 closeSocket:YES];
         return;
-    }
-
-    NSError *sendError = nil;
-    const uint8_t marker = 0x35;
-    if (![self sendRawBytes:&marker length:1 error:&sendError]) {
-        [self failWithError:sendError closeSocket:YES];
-        return;
-    }
-    const auto paramsBytes = std::span<const uint8_t>(
-        reinterpret_cast<const uint8_t *>(_params.data()),
-        _params.size());
-    if (![self sendFramedPayload:paramsBytes error:&sendError]) {
-        [self failWithError:sendError closeSocket:YES];
     }
 }
 
