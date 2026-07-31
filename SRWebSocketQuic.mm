@@ -457,9 +457,15 @@ std::string BuildPathAndQuery(NSURL *url)
     }
 
     __weak typeof(self) weakSelf = self;
-    _socket->onOpenStream([weakSelf](uint64_t conn_id, int64_t stream_id, quic::Dir dir) {
+    _socket->onOpenStream([weakSelf](uint64_t conn_id, int64_t stream_id,
+                                    quic::Dir dir, bool remote) {
         (void)conn_id;
         (void)dir;
+        // This WebSocket transport uses exactly one client-created stream.
+        // Reject peer-created streams instead of letting one become _streamId.
+        if (remote) {
+            return false;
+        }
         __strong typeof(weakSelf) strongSelf = weakSelf;
         if (!strongSelf || strongSelf->_streamId != quic::kInvalidStream) {
             return true;

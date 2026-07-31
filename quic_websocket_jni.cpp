@@ -420,7 +420,13 @@ bool sendFramed(NativeQuicWebSocket *native_ws,
 
 void wireCallbacks(NativeQuicWebSocket *native_ws) {
   native_ws->socket->onOpenStream(
-      [native_ws](uint64_t /*conn_id*/, int64_t stream_id, quic::Dir /*dir*/) {
+      [native_ws](uint64_t /*conn_id*/, int64_t stream_id, quic::Dir /*dir*/,
+                  bool remote) {
+        // This WebSocket transport only uses its client-created stream.
+        // Returning false asks Socket to reset an unexpected peer-created one.
+        if (remote) {
+          return false;
+        }
         if (native_ws->stream_id != quic::kInvalidStream) {
           return true;
         }
