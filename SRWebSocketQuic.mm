@@ -1,5 +1,6 @@
 #import "SRWebSocketQuic.h"
 
+#include "Cert.h"
 #include "quic/socket.hpp"
 
 #include <arpa/inet.h>
@@ -134,6 +135,50 @@ std::string BuildPathAndQuery(NSURL *url)
     return NSStringToStdString(url.query.length ? url.query : @"");
 }
 
+std::string QuicSNIHostFromRequest(NSURLRequest *request,
+                                   SRSecurityPolicy *securityPolicy,
+                                   const std::string &urlHost)
+{
+    BOOL sni = YES;
+    NSString *host = nil;
+    if (securityPolicy) {
+        if ([securityPolicy respondsToSelector:NSSelectorFromString(@"sni")]) {
+            if (id value = [securityPolicy valueForKey:@"sni"]) {
+                if ([value isKindOfClass:[NSNumber class]]) {
+                    sni = [value boolValue];
+                }
+            }
+        }
+        if (sni && [securityPolicy respondsToSelector:NSSelectorFromString(@"host")]) {
+            if (id value = [securityPolicy valueForKey:@"host"]) {
+                if ([value isKindOfClass:[NSString class]] && [(NSString *)value length]) {
+                    host = (NSString *)value;
+                }
+            }
+        }
+    }
+
+    if (!sni) {
+        return {};
+    }
+
+    // Keep the same fallback as the curl transport for policies that do not
+    // expose a host: an explicit Host header is the mapped TLS identity.
+    if (!host.length) {
+        for (NSString *key in request.allHTTPHeaderFields) {
+            if ([key caseInsensitiveCompare:@"Host"] == NSOrderedSame) {
+                NSString *value = request.allHTTPHeaderFields[key];
+                if (value.length) {
+                    host = value;
+                    break;
+                }
+            }
+        }
+    }
+
+    return host.length ? NSStringToStdString(host) : urlHost;
+}
+
 } // namespace
 
 @interface SRWebSocketQuic ()
@@ -154,6 +199,7 @@ std::string BuildPathAndQuery(NSURL *url)
     bool _receivedStatusCode;
     std::vector<uint8_t> _rxBuffer;
     std::mutex _rxMutex;
+    BOOL _allowsUntrustedSSLCertificates;
 }
 
 #pragma mark - Initializers
@@ -175,8 +221,11 @@ std::string BuildPathAndQuery(NSURL *url)
 
 - (instancetype)initWithURLRequest:(NSURLRequest *)request protocols:(NSArray<NSString *> *)protocols allowsUntrustedSSLCertificates:(BOOL)allowsUntrustedSSLCertificates
 {
-    (void)allowsUntrustedSSLCertificates;
-    return [self initWithURLRequest:request protocols:protocols securityPolicy:nil];
+    self = [self initWithURLRequest:request protocols:protocols securityPolicy:nil];
+    if (self) {
+        _allowsUntrustedSSLCertificates = allowsUntrustedSSLCertificates;
+    }
+    return self;
 }
 
 - (instancetype)initWithURLRequest:(NSURLRequest *)request protocols:(NSArray<NSString *> *)protocols securityPolicy:(SRSecurityPolicy *)securityPolicy
@@ -222,8 +271,11 @@ std::string BuildPathAndQuery(NSURL *url)
 
 - (instancetype)initWithURL:(NSURL *)url protocols:(NSArray<NSString *> *)protocols allowsUntrustedSSLCertificates:(BOOL)allowsUntrustedSSLCertificates
 {
-    (void)allowsUntrustedSSLCertificates;
-    return [self initWithURL:url protocols:protocols securityPolicy:nil];
+    self = [self initWithURL:url protocols:protocols securityPolicy:nil];
+    if (self) {
+        _allowsUntrustedSSLCertificates = allowsUntrustedSSLCertificates;
+    }
+    return self;
 }
 
 - (instancetype)initWithURL:(NSURL *)url protocols:(NSArray<NSString *> *)protocols securityPolicy:(SRSecurityPolicy *)securityPolicy
@@ -251,7 +303,7 @@ std::string BuildPathAndQuery(NSURL *url)
 
 - (BOOL)allowsUntrustedSSLCertificates
 {
-    return NO;
+    return _allowsUntrustedSSLCertificates;
 }
 
 #pragma mark - RunLoop scheduling
@@ -456,6 +508,12 @@ std::string BuildPathAndQuery(NSURL *url)
         return;
     }
 
+    _socket->onCertVerify([](void *ssl_ctx) { return AddCertsToSSL(ssl_ctx); });
+    quic::Options opts;
+    opts.verify_peer = !_allowsUntrustedSSLCertificates;
+    opts.sni = QuicSNIHostFromRequest(_quic_request, _quic_securityPolicy, _host);
+    _socket->options(std::move(opts));
+
     __weak typeof(self) weakSelf = self;
     _socket->onOpenStream([weakSelf](uint64_t conn_id, int64_t stream_id,
                                     quic::Dir dir, bool remote) {
@@ -511,12 +569,19 @@ std::string BuildPathAndQuery(NSURL *url)
         if (!reason.length) {
             reason = [NSString stringWithFormat:@"quic error kind=%u code=%llu", (unsigned)error.kind, error.code];
         }
-        NSError *err = [strongSelf makeError:SRWebSocketQuicErrorOpenFailed description:reason];
+        // Mirror SRWebSocketCurl: map TLS/cert failures to
+        // NSURLErrorClientCertificateRejected so JsppWebSocket → JsppRTCErrorSSL.
+        NSInteger nsCode = SRWebSocketQuicErrorOpenFailed;
+        NSMutableDictionary *userInfo = [NSMutableDictionary dictionary];
+        userInfo[NSLocalizedDescriptionKey] = reason;
         if (error.kind == quic::ErrKind::Application) {
-            NSMutableDictionary *userInfo = [err.userInfo mutableCopy] ?: [NSMutableDictionary dictionary];
             userInfo[@"HTTPResponseStatusCode"] = @(error.code);
-            err = [NSError errorWithDomain:err.domain code:err.code userInfo:userInfo];
+        } else if (error.kind == quic::ErrKind::Ssl) {
+            nsCode = NSURLErrorClientCertificateRejected;
         }
+        NSError *err = [NSError errorWithDomain:SRWebSocketQuicErrorDomain
+                                           code:nsCode
+                                       userInfo:userInfo];
         [strongSelf failWithError:err closeSocket:NO];
     });
 

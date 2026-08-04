@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "jmi.h"
+#include "Cert.h"
 #include "quic/socket.hpp"
 
 namespace {
@@ -541,7 +542,8 @@ QUICWS_JNI(void, nativeDestroy, jlong handle) {
   delete native_ws;
 }
 
-QUICWS_JNI(jboolean, nativeOpen, jlong handle, jstring url) {
+QUICWS_JNI(jboolean, nativeOpen, jlong handle, jstring url,
+           jstring sni_host) {
   auto *native_ws = fromHandle(handle);
   if (!native_ws || !native_ws->socket) {
     return JNI_FALSE;
@@ -568,6 +570,14 @@ QUICWS_JNI(jboolean, nativeOpen, jlong handle, jstring url) {
     return JNI_FALSE;
   }
   native_ws->payload_text = QueryHasJsonTrue(native_ws->params);
+  const bool use_sni = sni_host != nullptr;
+  const std::string tls_host = jmi::to_string(sni_host, env);
+
+  native_ws->socket->onCertVerify([](void *ssl_ctx) { return AddCertsToSSL(ssl_ctx); });
+  quic::Options opts;
+  opts.verify_peer = true;
+  opts.sni = use_sni ? tls_host : std::string{};
+  native_ws->socket->options(std::move(opts));
 
   wireCallbacks(native_ws);
 
