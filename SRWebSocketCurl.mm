@@ -1,6 +1,7 @@
 #import "SRWebSocketCurl.h"
 
 #include "WebSocket.h"
+#include "Cert.h"
 #include "SniUrl.h"
 #include <errno.h>
 #include <memory>
@@ -238,6 +239,7 @@ static bff::WebSocket::OpenOptions OptionsFromRequest(NSURLRequest *request, SRS
     [self setCurlReadyState:SR_CONNECTING];
 
     __weak typeof(self) weakSelf = self;
+    _ws->onCertVerify([](void *ssl_ctx) { return AddCertsToSSL(ssl_ctx); });
     _ws->setOnOpen([weakSelf]() {
         __strong typeof(weakSelf) strongSelf = weakSelf;
         if (!strongSelf) {

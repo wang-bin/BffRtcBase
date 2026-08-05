@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "WebSocket.h"
+#include "Cert.h"
 #include "jmi.h"
 
 namespace {
@@ -94,6 +95,8 @@ void wireCallbacks(NativeWebSocket *native_ws) {
                                 jerror.get<jstring>());
         });
     });
+
+    native_ws->ws->onCertVerify([](void *ssl_ctx) { return AddCertsToSSL(ssl_ctx); });
 }
 
 NativeWebSocket *fromHandle(jlong handle) {
@@ -128,6 +131,7 @@ CURLWS_JNI(void, nativeDestroy, jlong handle) {
         native_ws->ws->setOnClose(nullptr);
         native_ws->ws->setOnError(nullptr);
         native_ws->ws->setOnRecv(nullptr);
+        native_ws->ws->onCertVerify(nullptr);
         native_ws->ws->close();
         native_ws->ws.reset();
     }

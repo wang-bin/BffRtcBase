@@ -83,6 +83,10 @@ remote – Returns whether or not the closing of the connection was initiated by
     using on_close_fn_t = std::function<void(CloseCode code, std::string reason, bool remote)>;
     using on_error_fn_t = std::function<void(Error error)>;
     using on_recv_fn_t = std::function<void(std::string data, bool binary)>;
+    // Optional SSL_CTX hook (CURLOPT_SSL_CTX_FUNCTION). Load trust anchors
+    // only — not leaf verification. Return false to abort connect
+    // (CURLE_ABORTED_BY_CALLBACK).
+    using on_cert_verify_fn_t = std::function<bool(void *ssl_ctx)>;
 
     WebSocket();
     ~WebSocket();
@@ -94,6 +98,7 @@ remote – Returns whether or not the closing of the connection was initiated by
     void setOnClose(on_close_fn_t&& cb);
     void setOnError(on_error_fn_t&& cb);
     void setOnRecv(on_recv_fn_t&& cb);
+    void onCertVerify(on_cert_verify_fn_t&& cb);
 
     void setConnectTimeout(int ms);
 

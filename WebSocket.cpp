@@ -1,5 +1,4 @@
 #include "WebSocket.h"
-#include "Cert.h"
 #include "SniUrl.h"
 
 #if __has_include(<curl/curl.h>)
@@ -86,25 +85,6 @@ private:
     int pipefd_[2] = {-1, -1};
 };
 
-static CURLcode ssl_ctx_callback(CURL* curl, void* ssl_ctx, void* userdata) {
-    (void)curl;
-    (void)userdata;
-    if (!AddCertsToSSL(ssl_ctx)) {
-        return CURLE_ABORTED_BY_CALLBACK;
-    }
-    return CURLE_OK;
-}
-
-static void set_options(CURL* easy, bool verify_host) {
-    curl_easy_setopt(easy, CURLOPT_SSL_VERIFYPEER, 1L);
-    curl_easy_setopt(easy, CURLOPT_SSL_VERIFYHOST, 0L);  // SSL: no alternative certificate subject name matches target ipv4 address '123.60.148.205'
-    //curl_easy_setopt(easy, CURLOPT_SSL_VERIFYHOST, verify_host ? 2L : 0L);
-    curl_easy_setopt(easy, CURLOPT_TCP_NODELAY, 1L);
-    curl_easy_setopt(easy, CURLOPT_VERBOSE, 0L);
-    curl_easy_setopt(easy, CURLOPT_SSL_CTX_FUNCTION, ssl_ctx_callback);
-    curl_easy_setopt(easy, CURLOPT_SSL_CTX_DATA, nullptr);
-}
-
 class WebSocket::Private {
 public:
     struct SendItem {
@@ -149,6 +129,7 @@ public:
     on_close_fn_t on_close;
     on_error_fn_t on_error;
     on_recv_fn_t on_recv;
+    on_cert_verify_fn_t on_cert_verify;
 
     bool close_called = false;
     bool local_close_requested = false;
@@ -157,6 +138,30 @@ public:
     std::atomic<bool> open_notified{false};
     std::atomic<bool> error_reported{false};
     int connect_timeout = 0;
+
+    static CURLcode ssl_ctx_callback(CURL* curl, void* ssl_ctx, void* userdata) {
+        (void)curl;
+        auto *self = static_cast<WebSocket::Private *>(userdata);
+        if (!self || !self->on_cert_verify) {
+            return CURLE_OK;
+        }
+        if (!self->on_cert_verify(ssl_ctx)) {
+            return CURLE_ABORTED_BY_CALLBACK;
+        }
+        return CURLE_OK;
+    }
+
+    void applySslOptions(CURL* easy, bool verify_host) {
+        curl_easy_setopt(easy, CURLOPT_SSL_VERIFYPEER, 1L);
+        curl_easy_setopt(easy, CURLOPT_SSL_VERIFYHOST, 0L);  // SSL: no alternative certificate subject name matches target ipv4 address '123.60.148.205'
+        //curl_easy_setopt(easy, CURLOPT_SSL_VERIFYHOST, verify_host ? 2L : 0L);
+        curl_easy_setopt(easy, CURLOPT_TCP_NODELAY, 1L);
+        curl_easy_setopt(easy, CURLOPT_VERBOSE, 0L);
+        if (on_cert_verify) {
+            curl_easy_setopt(easy, CURLOPT_SSL_CTX_FUNCTION, &ssl_ctx_callback);
+            curl_easy_setopt(easy, CURLOPT_SSL_CTX_DATA, this);
+        }
+    }
 
     void notifyOpen() {
         bool expected = false;
@@ -554,7 +559,7 @@ bool WebSocket::open(const OpenOptions& options) {
             curl_easy_setopt(easy, CURLOPT_HTTPHEADER, header_list);
         }
 
-        set_options(easy, !sni_host.empty());
+        d->applySslOptions(easy, !sni_host.empty());
 
         d->easy.store(easy, std::memory_order_release);
 
@@ -752,6 +757,7 @@ void WebSocket::setOnOpen(on_open_fn_t&& cb) { d->on_open = std::move(cb); }
 void WebSocket::setOnClose(on_close_fn_t&& cb) { d->on_close = std::move(cb); }
 void WebSocket::setOnError(on_error_fn_t&& cb) { d->on_error = std::move(cb); }
 void WebSocket::setOnRecv(on_recv_fn_t&& cb) { d->on_recv = std::move(cb); }
+void WebSocket::onCertVerify(on_cert_verify_fn_t&& cb) { d->on_cert_verify = std::move(cb); }
 
 bool WebSocket::isRunning() const noexcept {
     return d->running.load();
@@ -828,6 +834,10 @@ void WebSocket::setOnError(on_error_fn_t&& cb)
 }
 
 void WebSocket::setOnRecv(on_recv_fn_t&& cb)
+{
+}
+
+void WebSocket::onCertVerify(on_cert_verify_fn_t&& cb)
 {
 }
 
