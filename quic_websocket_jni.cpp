@@ -41,6 +41,7 @@ enum class QuicWsError : int {
   SendFailed = 1005,
   ProtocolDecode = 1006,
   HandshakeCode = 1007,
+  Ssl = 1008,
 };
 
 enum class ReadyState : int {
@@ -464,10 +465,13 @@ void wireCallbacks(NativeQuicWebSocket *native_ws) {
                std::to_string(static_cast<unsigned>(error.kind)) +
                " code=" + std::to_string(error.code);
     }
-    if (error.kind == quic::ErrKind::Application) {
+    QuicWsError ws_error = QuicWsError::OpenFailed;
+    if (error.kind == quic::ErrKind::Ssl) {
+      ws_error = QuicWsError::Ssl;
+    } else if (error.kind == quic::ErrKind::Application) {
       http_code = static_cast<int>(error.code);
     }
-    fail(native_ws, QuicWsError::OpenFailed, std::move(reason), http_code,
+    fail(native_ws, ws_error, std::move(reason), http_code,
          /*close_socket=*/false);
   });
 
