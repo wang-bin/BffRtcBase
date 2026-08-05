@@ -148,7 +148,9 @@ static NSString *StdStringToNSString(const std::string &value)
                                   encoding:NSUTF8StringEncoding] ?: @"";
 }
 
-static bff::WebSocket::OpenOptions OptionsFromRequest(NSURLRequest *request, SRSecurityPolicy *securityPolicy)
+static bff::WebSocket::OpenOptions OptionsFromRequest(NSURLRequest *request,
+                                                       NSArray<NSString *> *protocols,
+                                                       SRSecurityPolicy *securityPolicy)
 {
     bff::WebSocket::OpenOptions options;
     options.url = NSStringToStdString(request.URL.absoluteString);
@@ -173,20 +175,36 @@ static bff::WebSocket::OpenOptions OptionsFromRequest(NSURLRequest *request, SRS
         }
     }
 
-    if (sni && options.sni_host.empty()) {
-        NSDictionary<NSString *, NSString *> *headers = request.allHTTPHeaderFields;
-        if (headers.count) {
-            options.headers.reserve(headers.count);
-            for (NSString *key in headers) {
-                NSString *value = headers[key];
-                if (!value) {
-                    continue;
-                }
-                options.headers.emplace_back(NSStringToStdString(key), NSStringToStdString(value));
-                if ([key caseInsensitiveCompare:@"Host"] == NSOrderedSame && value.length) {
-                    options.sni_host = NSStringToStdString(value);
-                }
+    NSDictionary<NSString *, NSString *> *headers = request.allHTTPHeaderFields;
+    BOOL hasProtocolHeader = NO;
+    if (headers.count) {
+        options.headers.reserve(headers.count + 1);
+        for (NSString *key in headers) {
+            NSString *value = headers[key];
+            if (!value) {
+                continue;
             }
+            options.headers.emplace_back(NSStringToStdString(key), NSStringToStdString(value));
+            if ([key caseInsensitiveCompare:@"Host"] == NSOrderedSame
+                && sni && options.sni_host.empty() && value.length) {
+                options.sni_host = NSStringToStdString(value);
+            }
+            if ([key caseInsensitiveCompare:@"Sec-WebSocket-Protocol"] == NSOrderedSame) {
+                hasProtocolHeader = YES;
+            }
+        }
+    }
+
+    if (!hasProtocolHeader && protocols.count) {
+        NSMutableArray<NSString *> *validProtocols = [NSMutableArray arrayWithCapacity:protocols.count];
+        for (id value in protocols) {
+            if ([value isKindOfClass:[NSString class]] && [(NSString *)value length]) {
+                [validProtocols addObject:(NSString *)value];
+            }
+        }
+        NSString *protocolHeader = [validProtocols componentsJoinedByString:@", "];
+        if (protocolHeader.length) {
+            options.headers.emplace_back("Sec-WebSocket-Protocol", NSStringToStdString(protocolHeader));
         }
     }
 
@@ -357,7 +375,9 @@ static bff::WebSocket::OpenOptions OptionsFromRequest(NSURLRequest *request, SRS
         }];
     });
 
-    const auto options = OptionsFromRequest(self.curl_request, self.curl_securityPolicy);
+    const auto options = OptionsFromRequest(self.curl_request,
+                                            self.curl_protocols,
+                                            self.curl_securityPolicy);
     if (!_ws->open(options)) {
         [self setCurlReadyState:SR_CLOSED];
         id<SRWebSocketDelegate> delegate = self.delegate;
