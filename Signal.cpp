@@ -76,6 +76,25 @@ static uint32_t portFromUrl(const std::string& url) {
     return 443;
 }
 
+static std::string sniHostForUrl(const std::string& url,
+                                 const bff::NodeSelector::Hosts& hosts) {
+    const auto host = hostFromUrl(url);
+    if (host.empty()) {
+        return {};
+    }
+
+    if (const auto it = hosts.find(host); it != hosts.end()) {
+        return it->second;
+    }
+
+    const auto hostWithPort = host + ":" + std::to_string(portFromUrl(url));
+    if (const auto it = hosts.find(hostWithPort); it != hosts.end()) {
+        return it->second;
+    }
+
+    return {};
+}
+
 static std::map<std::string, int> nodeRttsByIp(const bff::NodeSelector::Rtts& rtts) {
     std::map<std::string, int> byIp;
     for (const auto& kv : rtts) {
@@ -219,7 +238,11 @@ bool Signal::connect(const std::string& url) {
     if (!d_->token.empty()) {
         HttpClient::setAuthToken(d_->token);
     }
-    return d_->websocket.open(HttpClient::urlWithAuthToken(url));
+
+    WebSocket::OpenOptions options;
+    options.url = HttpClient::urlWithAuthToken(url);
+    options.sni_host = sniHostForUrl(url, d_->hosts_);
+    return d_->websocket.open(options);
 }
 
 void Signal::disconnect() {
@@ -326,6 +349,7 @@ void Signal::connectBestUrl(const std::string& serverUrl,
     d->node_selector.getBestUrl(serverUrl,
         [d, completionHandler = std::move(completionHandler)](const std::string& bestUrl, const NodeSelector::Hosts* hosts) mutable {
             if (!d->owner) return;
+            d->hosts_.clear();
             if (hosts) {
                 d->hosts_ = *hosts;
             }
@@ -349,7 +373,10 @@ void Signal::connectBestUrl(const std::string& serverUrl,
             d->last_code = 0;
 
             d->state_string = "connecting";
-            d->websocket.open(bestUrl);
+            WebSocket::OpenOptions options;
+            options.url = bestUrl;
+            options.sni_host = sniHostForUrl(bestUrl, d->hosts_);
+            d->websocket.open(options);
 
             if (completionHandler) {
                 completionHandler(bestUrl, hosts);
