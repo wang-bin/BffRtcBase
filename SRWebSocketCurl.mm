@@ -8,6 +8,9 @@
 #include <string>
 #include <utility>
 #include <vector>
+#if __has_include(<curl/curl.h>)
+#include <curl/curl.h>
+#endif
 
 /// Error domain used by this curl-based implementation.
 /// Distinct from the pod's SRWebSocketErrorDomain to avoid confusion with stream-level errors.
