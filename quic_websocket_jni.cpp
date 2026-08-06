@@ -476,14 +476,15 @@ void wireCallbacks(NativeQuicWebSocket *native_ws) {
          /*close_socket=*/false);
   });
 
-  native_ws->socket->onClose([native_ws](uint64_t /*conn_id*/, quic::Error error) {
+  native_ws->socket->onClose(
+    [native_ws](uint64_t /*conn_id*/, quic::Error error, bool remote) {
     std::string reason = error.reason;
-    if (reason.empty()) {
+    if (reason.empty() && error.kind != quic::ErrKind::None) {
       reason = "quic error kind=" +
                std::to_string(static_cast<unsigned>(error.kind)) +
                " code=" + std::to_string(error.code);
     }
-    notifyClose(native_ws, /*code=*/1000, std::move(reason), /*remote=*/true);
+    notifyClose(native_ws, /*code=*/1000, std::move(reason), remote);
   });
 }
 
