@@ -2,8 +2,6 @@
 
 #include <jni.h>
 
-#include <android/log.h>
-
 #include <arpa/inet.h>
 #include <netdb.h>
 
@@ -21,11 +19,12 @@
 
 #include "jmi.h"
 #include "Cert.h"
+#include "Log.hpp"
 #include "quic/socket.hpp"
 
-namespace {
+#define TAG "quic.ws"
 
-constexpr const char *kTag = "QuicWebSocket";
+namespace {
 
 #define QUICWS_JNI(Return, Name, ...)                                          \
   JNIEXPORT Return JNICALL                                                     \
@@ -324,6 +323,7 @@ void notifyMessage(NativeQuicWebSocket *native_ws, std::string payload,
 
 void notifyClose(NativeQuicWebSocket *native_ws, int code, std::string reason,
                  bool remote) {
+  DBG("onClose. code=%d, reason=%s, remote=%d", code, reason.c_str(), remote);
   bool expected = false;
   if (!native_ws->close_notified.compare_exchange_strong(expected, true)) {
     return;
@@ -343,6 +343,7 @@ void notifyClose(NativeQuicWebSocket *native_ws, int code, std::string reason,
 
 void notifyError(NativeQuicWebSocket *native_ws, int code, int http_code,
                  std::string detail) {
+  DBG("onError. code=%d http=%d detail=%s", code, http_code, detail.c_str());
   bool expected = false;
   if (!native_ws->close_notified.compare_exchange_strong(expected, true)) {
     return;
@@ -498,6 +499,19 @@ bool sendFramed(NativeQuicWebSocket *native_ws, std::span<const uint8_t> payload
   return sendRaw(native_ws, framed);
 }
 
+void doClose(NativeQuicWebSocket *native_ws, int code, std::string reason_text) {
+  if (!native_ws || !native_ws->socket) {
+    return;
+  }
+  const auto state = native_ws->state.load(std::memory_order_acquire);
+  if (state == ReadyState::Closed || state == ReadyState::Closing) {
+    return;
+  }
+  native_ws->state.store(ReadyState::Closing, std::memory_order_release);
+  native_ws->socket->close();
+  notifyClose(native_ws, code, std::move(reason_text), /*remote=*/false);
+}
+
 NativeQuicWebSocket *fromHandle(jlong handle) {
   return reinterpret_cast<NativeQuicWebSocket *>(handle);
 }
@@ -576,6 +590,7 @@ QUICWS_JNI(jboolean, nativeOpen, jlong handle, jstring url,
   native_ws->payload_text = QueryHasJsonTrue(native_ws->params);
   const bool use_sni = sni_host != nullptr;
   const std::string tls_host = jmi::to_string(sni_host, env);
+  DBG("open. sni_host=%s", tls_host.c_str());
 
   native_ws->socket->onCertVerify([](void *ssl_ctx) { return AddCertsToSSL(ssl_ctx); });
   quic::Options opts;
@@ -619,28 +634,22 @@ QUICWS_JNI(jboolean, nativeOpen, jlong handle, jstring url,
 }
 
 QUICWS_JNI(void, nativeClose, jlong handle, jint code, jstring reason) {
-  auto *native_ws = fromHandle(handle);
-  if (!native_ws || !native_ws->socket) {
-    return;
-  }
-  const auto state = native_ws->state.load(std::memory_order_acquire);
-  if (state == ReadyState::Closed || state == ReadyState::Closing) {
-    return;
-  }
-  native_ws->state.store(ReadyState::Closing, std::memory_order_release);
-  native_ws->socket->close();
-
   std::string reason_text;
   if (reason) {
     reason_text = jmi::to_string(reason, env);
   }
-  notifyClose(native_ws, code, std::move(reason_text), /*remote=*/false);
+  DBG("close. code=%d, reason=%s", code, reason_text.c_str());
+  doClose(fromHandle(handle), code, std::move(reason_text));
 }
 
 QUICWS_JNI(void, nativeCloseAsync, jlong handle, jint code, jstring reason) {
+  std::string reason_text;
+  if (reason) {
+    reason_text = jmi::to_string(reason, env);
+  }
+  DBG("closeAsync. code=%d, reason=%s", code, reason_text.c_str());
   // Cooperative close is already non-joining; same as nativeClose.
-  Java_com_jspp_avrtcsdk_impl_QuicWebSocket_nativeClose(env, clazz, handle, code,
-                                                        reason);
+  doClose(fromHandle(handle), code, std::move(reason_text));
 }
 
 QUICWS_JNI(jboolean, nativeSend, jlong handle, jbyteArray data, jint offset,

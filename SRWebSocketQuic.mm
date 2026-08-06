@@ -1,6 +1,7 @@
 #import "SRWebSocketQuic.h"
 
 #include "Cert.h"
+#include "Log.hpp"
 #include "quic/socket.hpp"
 
 #include <arpa/inet.h>
@@ -12,6 +13,8 @@
 #include <mutex>
 #include <utility>
 #include <vector>
+
+#define TAG "quic.ws"
 
 static NSString *const SRWebSocketQuicErrorDomain = @"com.bffmsg.SRWebSocketQuic";
 
@@ -349,6 +352,11 @@ std::string QuicSNIHostFromRequest(NSURLRequest *request,
 
 - (void)failWithError:(NSError *)error closeSocket:(BOOL)closeSocket
 {
+    const id httpStatus = error.userInfo[@"HTTPResponseStatusCode"];
+    const int http_code = [httpStatus respondsToSelector:@selector(intValue)]
+        ? [httpStatus intValue]
+        : 0;
+    DBG("onError. code=%ld http=%d detail=%s", (long)error.code, http_code, error.localizedDescription.UTF8String ?: "");
     [self setQuicReadyState:SR_CLOSED];
     if (closeSocket && _socket) {
         _socket->close();
@@ -512,6 +520,7 @@ std::string QuicSNIHostFromRequest(NSURLRequest *request,
     quic::Options opts;
     opts.verify_peer = !_allowsUntrustedSSLCertificates;
     opts.sni = QuicSNIHostFromRequest(_quic_request, _quic_securityPolicy, _host);
+    DBG("open. sni_host=%s", opts.sni.c_str());
     _socket->options(std::move(opts));
 
     __weak typeof(self) weakSelf = self;
@@ -596,6 +605,7 @@ std::string QuicSNIHostFromRequest(NSURLRequest *request,
             reason = [NSString stringWithFormat:@"quic error kind=%u code=%llu",
                                (unsigned)error.kind, error.code];
         }
+        DBG("onClose. code=%d, reason=%s, remote=%d", (int)SRStatusCodeNormal, reason.UTF8String ?: "", 1);
         [strongSelf performDelegate:^{
             [strongSelf setQuicReadyState:SR_CLOSED];
             id<SRWebSocketDelegate> delegate = strongSelf.delegate;
@@ -639,13 +649,13 @@ std::string QuicSNIHostFromRequest(NSURLRequest *request,
 
 - (void)close
 {
+    DBG("close");
     [self closeWithCode:SRStatusCodeNormal reason:nil];
 }
 
 - (void)closeWithCode:(NSInteger)code reason:(NSString *)reason
 {
-    (void)code;
-    (void)reason;
+    DBG("close. code=%ld, reason=%s", (long)code, reason.UTF8String ?: "");
     if (_quic_readyState == SR_CLOSED || _quic_readyState == SR_CLOSING) {
         return;
     }
