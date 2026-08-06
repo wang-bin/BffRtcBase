@@ -50,6 +50,17 @@ enum class ReadyState : int {
   Closed = 3,
 };
 
+constexpr int kWebSocketNormalClose = 1000;
+// This status is reported to the callback only; it must not be sent in a
+// WebSocket close frame.
+constexpr int kWebSocketAbnormalClose = 1006;
+
+int WebSocketCloseCode(const quic::Error &error, bool remote) {
+  return !remote && error.kind == quic::ErrKind::None
+             ? kWebSocketNormalClose
+             : kWebSocketAbnormalClose;
+}
+
 size_t PutUVarIntLen(uint64_t n) {
   if (n < 64) {
     return 1;
@@ -253,6 +264,7 @@ struct NativeQuicWebSocket {
 
   std::atomic<ReadyState> state{ReadyState::Closed};
   std::atomic<bool> close_notified{false};
+  std::atomic<bool> error_notified{false};
   bool connect_started = false;
 
   std::string host;
@@ -345,7 +357,10 @@ void notifyError(NativeQuicWebSocket *native_ws, int code, int http_code,
                  std::string detail) {
   DBG("onError. code=%d http=%d detail=%s", code, http_code, detail.c_str());
   bool expected = false;
-  if (!native_ws->close_notified.compare_exchange_strong(expected, true)) {
+  // Error and close are separate notifications. Socket guarantees that an
+  // error callback precedes the close callback, so do not consume the close
+  // notification here.
+  if (!native_ws->error_notified.compare_exchange_strong(expected, true)) {
     return;
   }
   native_ws->state.store(ReadyState::Closed, std::memory_order_release);
@@ -477,15 +492,16 @@ void wireCallbacks(NativeQuicWebSocket *native_ws) {
   });
 
   native_ws->socket->onClose(
-    [native_ws](uint64_t /*conn_id*/, quic::Error error, bool remote) {
-    std::string reason = error.reason;
-    if (reason.empty() && error.kind != quic::ErrKind::None) {
-      reason = "quic error kind=" +
-               std::to_string(static_cast<unsigned>(error.kind)) +
-               " code=" + std::to_string(error.code);
-    }
-    notifyClose(native_ws, /*code=*/1000, std::move(reason), remote);
-  });
+      [native_ws](uint64_t /*conn_id*/, quic::Error error, bool remote) {
+        std::string reason = error.reason;
+        if (reason.empty() && error.kind != quic::ErrKind::None) {
+          reason = "quic error kind=" +
+                   std::to_string(static_cast<unsigned>(error.kind)) +
+                   " code=" + std::to_string(error.code);
+        }
+        notifyClose(native_ws, WebSocketCloseCode(error, remote),
+                    std::move(reason), remote);
+      });
 }
 
 bool sendRaw(NativeQuicWebSocket *native_ws, std::span<const uint8_t> bytes) {
@@ -572,6 +588,7 @@ QUICWS_JNI(jboolean, nativeOpen, jlong handle, jstring url,
   }
   native_ws->connect_started = true;
   native_ws->close_notified.store(false, std::memory_order_release);
+  native_ws->error_notified.store(false, std::memory_order_release);
   native_ws->state.store(ReadyState::Connecting, std::memory_order_release);
   native_ws->stream_id = quic::kInvalidStream;
   native_ws->received_status_code = false;

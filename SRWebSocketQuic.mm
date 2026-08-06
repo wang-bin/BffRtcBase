@@ -30,6 +30,10 @@ typedef NS_ENUM(NSInteger, SRWebSocketQuicErrorCode) {
 
 namespace {
 
+// Reported to the delegate for abnormal termination; it is not sent as a
+// WebSocket close frame.
+constexpr NSInteger kWebSocketAbnormalClose = 1006;
+
 std::string NSStringToStdString(NSString *string)
 {
     if (!string.length) {
@@ -601,17 +605,18 @@ std::string QuicSNIHostFromRequest(NSURLRequest *request,
             return;
         }
         NSString *reason = StdStringToNSString(error.reason);
-        const BOOL normalClose = error.kind == quic::ErrKind::None;
+        const BOOL normalClose = !remote && error.kind == quic::ErrKind::None;
+        const NSInteger closeCode = normalClose ? SRStatusCodeNormal : kWebSocketAbnormalClose;
         if (!reason.length && !normalClose) {
             reason = [NSString stringWithFormat:@"quic error kind=%u code=%llu",
                                (unsigned)error.kind, error.code];
         }
-        DBG("onClose. code=%d, reason=%s, remote=%d", (int)SRStatusCodeNormal, reason.UTF8String ?: "", (int)remote);
+        DBG("onClose. code=%ld, reason=%s, remote=%d", (long)closeCode, reason.UTF8String ?: "", (int)remote);
         [strongSelf performDelegate:^{
             [strongSelf setQuicReadyState:SR_CLOSED];
             id<SRWebSocketDelegate> delegate = strongSelf.delegate;
             if ([delegate respondsToSelector:@selector(webSocket:didCloseWithCode:reason:wasClean:)]) {
-                [delegate webSocket:strongSelf didCloseWithCode:SRStatusCodeNormal reason:reason wasClean:normalClose];
+                [delegate webSocket:strongSelf didCloseWithCode:closeCode reason:reason wasClean:normalClose];
             }
         }];
     });
