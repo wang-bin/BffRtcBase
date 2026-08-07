@@ -7,6 +7,7 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <cerrno>
+#include <cinttypes>
 #include <cstdint>
 #include <cstring>
 #include <memory>
@@ -434,10 +435,11 @@ std::string QuicSNIHostFromRequest(NSURLRequest *request,
         _receivedStatusCode = true;
         if (code != 200) {
             NSError *err = [self makeError:SRWebSocketQuicErrorHandshakeCode
-                               description:[NSString stringWithFormat:@"quic handshake status code: %llu", code]];
+                               description:[NSString stringWithFormat:@"quic handshake status code: %" PRIu64, code]];
             [self failWithError:err closeSocket:YES];
             return;
         }
+        DBG("onOpen");
         [self performDelegate:^{
             [self setQuicReadyState:SR_OPEN];
             id<SRWebSocketDelegate> delegate = self.delegate;
@@ -528,10 +530,18 @@ std::string QuicSNIHostFromRequest(NSURLRequest *request,
     _socket->options(std::move(opts));
 
     __weak typeof(self) weakSelf = self;
+    _socket->onOpen([](const sockaddr *addr, socklen_t len) {
+        char host[NI_MAXHOST] = {};
+        char service[NI_MAXSERV] = {};
+        const int rc = addr ? getnameinfo(addr, len, host, sizeof(host), service,
+                                          sizeof(service), NI_NUMERICHOST | NI_NUMERICSERV)
+                            : EAI_FAIL;
+        DBG("onOpen. addr=%s:%s", rc == 0 ? host : "?", rc == 0 ? service : "?");
+        return true;
+    });
     _socket->onOpenStream([weakSelf](uint64_t conn_id, int64_t stream_id,
                                     quic::Dir dir, bool remote) {
-        (void)conn_id;
-        (void)dir;
+        DBG("onOpenStream. conn_id=%" PRIu64 " stream_id=%" PRId64 " dir=%d remote=%d", conn_id, stream_id, static_cast<int>(dir), remote);
         // This WebSocket transport uses exactly one client-created stream.
         // Reject peer-created streams instead of letting one become _streamId.
         if (remote) {
@@ -559,10 +569,7 @@ std::string QuicSNIHostFromRequest(NSURLRequest *request,
         return true;
     });
 
-    _socket->onRecv([weakSelf](uint64_t conn_id, int64_t stream_id, std::span<const uint8_t> data, bool fin) {
-        (void)conn_id;
-        (void)stream_id;
-        (void)fin;
+    _socket->onRecv([weakSelf](uint64_t /*conn_id*/, int64_t /*stream_id*/, std::span<const uint8_t> data, bool /*fin*/) {
         __strong typeof(weakSelf) strongSelf = weakSelf;
         if (!strongSelf) {
             return;
@@ -573,14 +580,14 @@ std::string QuicSNIHostFromRequest(NSURLRequest *request,
     });
 
     _socket->onError([weakSelf](uint64_t conn_id, quic::Error error) {
-        (void)conn_id;
+        DBG("onError. conn_id=%" PRIu64 " kind=%u code=%" PRIu64 " reason=%s", conn_id, static_cast<unsigned>(error.kind), error.code, error.reason.c_str());
         __strong typeof(weakSelf) strongSelf = weakSelf;
         if (!strongSelf) {
             return;
         }
         NSString *reason = StdStringToNSString(error.reason);
         if (!reason.length) {
-            reason = [NSString stringWithFormat:@"quic error kind=%u code=%llu", (unsigned)error.kind, error.code];
+            reason = [NSString stringWithFormat:@"quic error kind=%u code=%" PRIu64, (unsigned)error.kind, error.code];
         }
         // Mirror SRWebSocketCurl: map TLS/cert failures to
         // NSURLErrorClientCertificateRejected so JsppWebSocket → JsppRTCErrorSSL.
@@ -598,8 +605,12 @@ std::string QuicSNIHostFromRequest(NSURLRequest *request,
         [strongSelf failWithError:err closeSocket:NO];
     });
 
+    _socket->onCloseStream([weakSelf](uint64_t conn_id, int64_t stream_id,
+                                      bool remote) {
+        DBG("onCloseStream. conn_id=%" PRIu64 " stream_id=%" PRId64 " remote=%d", conn_id, stream_id, remote);
+    });
+
     _socket->onClose([weakSelf](uint64_t conn_id, quic::Error error, bool remote) {
-        (void)conn_id;
         __strong typeof(weakSelf) strongSelf = weakSelf;
         if (!strongSelf) {
             return;
@@ -608,10 +619,10 @@ std::string QuicSNIHostFromRequest(NSURLRequest *request,
         const BOOL normalClose = !remote && error.kind == quic::ErrKind::None;
         const NSInteger closeCode = normalClose ? SRStatusCodeNormal : kWebSocketAbnormalClose;
         if (!reason.length && !normalClose) {
-            reason = [NSString stringWithFormat:@"quic error kind=%u code=%llu",
+            reason = [NSString stringWithFormat:@"quic error kind=%u code=%" PRIu64,
                                (unsigned)error.kind, error.code];
         }
-        DBG("onClose. code=%ld, reason=%s, remote=%d", (long)closeCode, reason.UTF8String ?: "", (int)remote);
+        DBG("onClose. conn_id=%" PRIu64 " kind=%u code=%" PRIu64 " ws_code=%ld reason=%s remote=%d", conn_id, static_cast<unsigned>(error.kind), error.code, (long)closeCode, reason.UTF8String ?: "", (int)remote);
         [strongSelf performDelegate:^{
             [strongSelf setQuicReadyState:SR_CLOSED];
             id<SRWebSocketDelegate> delegate = strongSelf.delegate;

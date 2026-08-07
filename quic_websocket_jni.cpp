@@ -6,6 +6,7 @@
 #include <netdb.h>
 
 #include <atomic>
+#include <cinttypes>
 #include <cstdint>
 #include <cstring>
 #include <functional>
@@ -312,6 +313,7 @@ void callOnNativeThread(NativeQuicWebSocket *native_ws,
 }
 
 void notifyOpen(NativeQuicWebSocket *native_ws) {
+  DBG("onOpen");
   native_ws->state.store(ReadyState::Open, std::memory_order_release);
   callOnNativeThread(native_ws, [native_ws](JNIEnv *env) {
     env->CallVoidMethod(native_ws->java_client, native_ws->mid_open);
@@ -437,9 +439,20 @@ bool sendFramed(NativeQuicWebSocket *native_ws,
                 std::span<const uint8_t> payload);
 
 void wireCallbacks(NativeQuicWebSocket *native_ws) {
+  native_ws->socket->onOpen([](const sockaddr *addr, socklen_t len) {
+    char host[NI_MAXHOST] = {};
+    char service[NI_MAXSERV] = {};
+    const int rc = addr ? getnameinfo(addr, len, host, sizeof(host), service,
+                                      sizeof(service), NI_NUMERICHOST | NI_NUMERICSERV)
+                        : EAI_FAIL;
+    DBG("onOpen. addr=%s:%s", rc == 0 ? host : "?", rc == 0 ? service : "?");
+    return true;
+  });
+
   native_ws->socket->onOpenStream(
-      [native_ws](uint64_t /*conn_id*/, int64_t stream_id, quic::Dir /*dir*/,
+      [native_ws](uint64_t conn_id, int64_t stream_id, quic::Dir dir,
                   bool remote) {
+        DBG("onOpenStream. conn_id=%" PRIu64 " stream_id=%" PRId64 " dir=%d remote=%d", conn_id, stream_id, static_cast<int>(dir), remote);
         // This WebSocket transport only uses its client-created stream.
         // Returning false asks Socket to reset an unexpected peer-created one.
         if (remote) {
@@ -473,7 +486,8 @@ void wireCallbacks(NativeQuicWebSocket *native_ws) {
         handleDataFramesLocked(native_ws);
       });
 
-  native_ws->socket->onError([native_ws](uint64_t /*conn_id*/, quic::Error error) {
+  native_ws->socket->onError([native_ws](uint64_t conn_id, quic::Error error) {
+    DBG("onError. conn_id=%" PRIu64 " kind=%u code=%" PRIu64 " reason=%s", conn_id, static_cast<unsigned>(error.kind), error.code, error.reason.c_str());
     int http_code = 0;
     std::string reason = error.reason;
     if (reason.empty()) {
@@ -491,14 +505,20 @@ void wireCallbacks(NativeQuicWebSocket *native_ws) {
          /*close_socket=*/false);
   });
 
+  native_ws->socket->onCloseStream(
+      [native_ws](uint64_t conn_id, int64_t stream_id, bool remote) {
+        DBG("onCloseStream. conn_id=%" PRIu64 " stream_id=%" PRId64 " remote=%d", conn_id, stream_id, remote);
+      });
+
   native_ws->socket->onClose(
-      [native_ws](uint64_t /*conn_id*/, quic::Error error, bool remote) {
+      [native_ws](uint64_t conn_id, quic::Error error, bool remote) {
         std::string reason = error.reason;
         if (reason.empty() && error.kind != quic::ErrKind::None) {
           reason = "quic error kind=" +
                    std::to_string(static_cast<unsigned>(error.kind)) +
                    " code=" + std::to_string(error.code);
         }
+        DBG("onClose. conn_id=%" PRIu64 " kind=%u code=%" PRIu64 " reason=%s remote=%d", conn_id, static_cast<unsigned>(error.kind), error.code, reason.c_str(), remote);
         notifyClose(native_ws, WebSocketCloseCode(error, remote),
                     std::move(reason), remote);
       });
