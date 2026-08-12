@@ -337,7 +337,7 @@ void notifyMessage(NativeQuicWebSocket *native_ws, std::string payload,
 
 void notifyClose(NativeQuicWebSocket *native_ws, int code, std::string reason,
                  bool remote) {
-  DBG("onClose. code=%d, reason=%s, remote=%d", code, reason.c_str(), remote);
+  DBG("notifyClose. code=%d, reason=%s, remote=%d", code, reason.c_str(), remote);
   bool expected = false;
   if (!native_ws->close_notified.compare_exchange_strong(expected, true)) {
     return;

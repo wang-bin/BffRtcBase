@@ -153,6 +153,14 @@ CURLWS_JNI(void, nativeDestroy, jlong handle) {
     delete native_ws;
 }
 
+CURLWS_JNI(void, nativeSetConnectTimeout, jlong handle, jint ms) {
+    auto *native_ws = fromHandle(handle);
+    if (!native_ws || !native_ws->ws) {
+        return;
+    }
+    native_ws->ws->setConnectTimeout(ms);
+}
+
 CURLWS_JNI(jboolean, nativeOpen, jlong handle, jstring url, jobjectArray header_keys,
            jobjectArray header_values, jstring sni_host) {
     auto *native_ws = fromHandle(handle);
