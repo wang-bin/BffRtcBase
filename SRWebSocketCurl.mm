@@ -4,6 +4,7 @@
 #include "Cert.h"
 #include "SniUrl.h"
 #include <errno.h>
+#include <algorithm>
 #include <memory>
 #include <string>
 #include <utility>
@@ -61,7 +62,6 @@ static NSString *const SRWebSocketCurlErrorDomain = @"com.bffmsg.SRWebSocketCurl
     _curl_protocols = [protocols copy];
     _curl_securityPolicy = securityPolicy;
     _curl_readyState = SR_CONNECTING;
-    _ws = std::make_unique<bff::WebSocket>();
     return self;
 }
 
@@ -231,6 +231,11 @@ static bff::WebSocket::OpenOptions OptionsFromRequest(NSURLRequest *request,
 
 - (NSError *)errorFromWebSocket
 {
+    if (!_ws) {
+        return [NSError errorWithDomain:SRWebSocketCurlErrorDomain
+                                   code:0
+                               userInfo:@{NSLocalizedDescriptionKey: @"WebSocket error"}];
+    }
     const int code = _ws->lastErrorCode();
     NSString *message = StdStringToNSString(_ws->lastError());
     if (!message.length) {
@@ -258,6 +263,10 @@ static bff::WebSocket::OpenOptions OptionsFromRequest(NSURLRequest *request,
     }
     self.curl_opened = YES;
     [self setCurlReadyState:SR_CONNECTING];
+
+    if (!_ws) {
+        _ws = std::make_unique<bff::WebSocket>();
+    }
 
     __weak typeof(self) weakSelf = self;
     _ws->onCertVerify([](void *ssl_ctx) { return AddCertsToSSL(ssl_ctx); });
@@ -378,6 +387,7 @@ static bff::WebSocket::OpenOptions OptionsFromRequest(NSURLRequest *request,
     const auto options = OptionsFromRequest(self.curl_request,
                                             self.curl_protocols,
                                             self.curl_securityPolicy);
+    _ws->setConnectTimeout(static_cast<int>(std::max(0.0, self.curl_request.timeoutInterval * 1000.0)));
     if (!_ws->open(options)) {
         [self setCurlReadyState:SR_CLOSED];
         id<SRWebSocketDelegate> delegate = self.delegate;
@@ -435,7 +445,7 @@ static bff::WebSocket::OpenOptions OptionsFromRequest(NSURLRequest *request,
         return NO;
     }
     const auto payload = NSStringToStdString(string);
-    if (!_ws->send(payload, false)) {
+    if (!_ws || !_ws->send(payload, false)) {
         if (error) {
             *error = [self errorFromWebSocket];
         }
@@ -472,7 +482,7 @@ static bff::WebSocket::OpenOptions OptionsFromRequest(NSURLRequest *request,
         }
         return NO;
     }
-    if (!_ws->send(data.bytes, data.length, true)) {
+    if (!_ws || !_ws->send(data.bytes, data.length, true)) {
         if (error) {
             *error = [self errorFromWebSocket];
         }
