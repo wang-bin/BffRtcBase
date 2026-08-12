@@ -6,6 +6,7 @@
 
 #include <arpa/inet.h>
 #include <netdb.h>
+#include <algorithm>
 #include <cerrno>
 #include <cinttypes>
 #include <cstdint>
@@ -526,7 +527,8 @@ std::string QuicSNIHostFromRequest(NSURLRequest *request,
     quic::Options opts;
     opts.verify_peer = !_allowsUntrustedSSLCertificates;
     opts.sni = QuicSNIHostFromRequest(_quic_request, _quic_securityPolicy, _host);
-    DBG("open. sni_host=%s", opts.sni.c_str());
+    opts.connect_timeout = static_cast<int>(std::max(0.0, self.quic_request.timeoutInterval * 1000.0));
+    DBG("open. sni_host=%s connect_timeout=%d", opts.sni.c_str(), opts.connect_timeout);
     _socket->options(std::move(opts));
 
     __weak typeof(self) weakSelf = self;
@@ -591,15 +593,20 @@ std::string QuicSNIHostFromRequest(NSURLRequest *request,
         }
         // Mirror SRWebSocketCurl: map TLS/cert failures to
         // NSURLErrorClientCertificateRejected so JsppWebSocket → JsppRTCErrorSSL.
+        NSString *errDomain = SRWebSocketQuicErrorDomain;
         NSInteger nsCode = SRWebSocketQuicErrorOpenFailed;
         NSMutableDictionary *userInfo = [NSMutableDictionary dictionary];
         userInfo[NSLocalizedDescriptionKey] = reason;
-        if (error.kind == quic::ErrKind::Application) {
+        if (error.kind == quic::ErrKind::Lib
+            && error.code == static_cast<uint64_t>(ETIMEDOUT)) {
+            errDomain = NSURLErrorDomain;
+            nsCode = NSURLErrorTimedOut;
+        } else if (error.kind == quic::ErrKind::Application) {
             userInfo[@"HTTPResponseStatusCode"] = @(error.code);
         } else if (error.kind == quic::ErrKind::Ssl) {
             nsCode = NSURLErrorClientCertificateRejected;
         }
-        NSError *err = [NSError errorWithDomain:SRWebSocketQuicErrorDomain
+        NSError *err = [NSError errorWithDomain:errDomain
                                            code:nsCode
                                        userInfo:userInfo];
         [strongSelf failWithError:err closeSocket:NO];
