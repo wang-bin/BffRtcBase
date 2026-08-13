@@ -60,6 +60,13 @@ enum class RtcIcePolicy : int {
     TLS,
 };
 
+enum class SignalImplementation : int {
+    Curl = 0,
+    Quic,
+    // Happy Eyeballs: Quic first, then TCP (Curl) after mixedDelay; first open wins.
+    Mixed,
+};
+
 struct VideoOptions {
     int fps = 20;
     int muteFps = 10;
@@ -83,6 +90,11 @@ struct SignalOptions {
     bool hasServer = false;
     std::string server;
     bool json = false;
+    SignalImplementation implementation = SignalImplementation::Mixed;
+    // Mixed: ms to wait after starting Quic before starting TCP. <=0 starts TCP immediately.
+    int mixedDelay = 250;
+    // Handshake deadline in milliseconds.
+    int connectTimeout = 10000;
     int pingInterval = 1000;
     int pingTimeout = 2000;
     int reconnectInterval = 1000;
