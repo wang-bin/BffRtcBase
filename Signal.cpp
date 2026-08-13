@@ -3,14 +3,17 @@
 #include <atomic>
 #include <chrono>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <set>
+#include <thread>
 #include <unordered_map>
 
 #include "NodeSelector.h"
 #include "PbCJson.h"
 #include "HttpClient.h"
+#include "QuicSocket.h"
 #include "SniUrl.h"
 #include "WebSocket.h"
 #include "json.hpp"
@@ -107,74 +110,361 @@ static std::map<std::string, int> nodeRttsByIp(const bff::NodeSelector::Rtts& rt
 
 namespace bff {
 
-class Signal::Private {
+class Signal::Private : public std::enable_shared_from_this<Private> {
 public:
+    enum class Leg { Curl, Quic };
+
     explicit Private(Signal* owner_ptr) : owner(owner_ptr) {
-        websocket.setOnOpen([this]() {
-            state_string = "open";
-        });
+        websocket.setOnOpen([this] { onTransportOpen(Leg::Curl); });
         websocket.setOnClose([this](WebSocket::CloseCode code, std::string, bool remote) {
-            state_string = "closed";
-            if (!owner) {
-                return;
-            }
-            // Match JsppWebSocket didCloseWithCode: 602/603 → Token (all channels), no reconnect.
-            const int closeCode = static_cast<int>(code);
-            if (closeCode == 602 || closeCode == 603) {
-                owner->onError(RtcError::Token);
-                return;
-            }
-            if (remote) {
-                owner->onReconnect();
-            }
+            onTransportClose(Leg::Curl, static_cast<int>(code), remote);
         });
-        websocket.setOnError([this](WebSocket::Error err) {
-            if (!owner) {
-                return;
-            }
-            // Match JsppWebSocket didFailWithError (+ SRWebSocketCurl curl→NSError mapping):
-            // timeout / bad URL → SignalFailed (fan-out); SSL → SSL (fan-out);
-            // connect/resolve (EHOSTDOWN) and other errors → no onError (ObjC reconnects).
-            if (IsCurlSecError(err.curlCode)) {
-                owner->onError(RtcError::SSL);
-                return;
-            }
-#if defined(LIBCURL_VERSION_MAJOR)
-            if (err.curlCode == CURLE_OPERATION_TIMEDOUT) {
-                owner->onError(RtcError::SignalFailed);
-                return;
-            }
-            if (err.curlCode == CURLE_COULDNT_CONNECT || err.curlCode == CURLE_COULDNT_RESOLVE_HOST) {
-                return;
-            }
-#endif
-            if (err.curlCode == static_cast<int>(WebSocket::CloseCode::NeverConnected)) {
-                owner->onError(RtcError::SignalFailed);
-                return;
-            }
-            // Generic transport failure: ObjC reconnects without onError.
-        });
+        websocket.setOnError([this](WebSocket::Error err) { onCurlError(err); });
         websocket.setOnRecv([this](std::string data, bool binary) {
-            Rtc__SignalResponse* response = nullptr;
-            if (binary) {
-                response = rtc__signal_response__unpack(
-                    nullptr,
-                    data.size(),
-                    reinterpret_cast<const uint8_t*>(data.data()));
-            } else {
-                auto* msg = messageFromJsonString(&rtc__signal_response__descriptor, data);
-                response = reinterpret_cast<Rtc__SignalResponse*>(msg);
+            onTransportRecv(Leg::Curl, std::move(data), binary);
+        });
+
+        quic.setOnOpen([this] { onTransportOpen(Leg::Quic); });
+        quic.setOnClose([this](int code, std::string, bool remote) {
+            onTransportClose(Leg::Quic, code, remote);
+        });
+        quic.setOnError([this](QuicSocket::Error err) { onQuicError(err); });
+        quic.setOnRecv([this](std::string data, bool binary) {
+            onTransportRecv(Leg::Quic, std::move(data), binary);
+        });
+    }
+
+    static bool mixedMode() {
+        return Config::Shared().signal.implementation == SignalImplementation::Mixed;
+    }
+
+    static bool isTokenCode(int code) { return code == 602 || code == 603; }
+
+    bool isAlt(Leg leg) const {
+        return has_alt && leg == Leg::Curl && primary_leg == Leg::Quic;
+    }
+
+    bool isCandidate(Leg leg) const {
+        return leg == primary_leg || isAlt(leg);
+    }
+
+    void cancelMixedDelayOnly() {
+        mixed_delay_gen.fetch_add(1, std::memory_order_relaxed);
+        mixed_delay_pending = false;
+    }
+
+    // join=true only from the app thread (close() joins the worker / QUIC loop).
+    void cancelMixedRace(bool join) {
+        bool close_alt = false;
+        {
+            std::lock_guard lock(race_mtx);
+            cancelMixedDelayOnly();
+            if (has_alt) {
+                has_alt = false;
+                close_alt = true;
             }
-            if (!response) {
-                LOGW("signal response unpack failed (binary=%d len=%zu)",
-                     binary ? 1 : 0, data.size());
+        }
+        if (!close_alt) {
+            return;
+        }
+        if (join) {
+            websocket.close();
+        } else {
+            websocket.closeAsync();
+        }
+    }
+
+    bool isMixedRacing() const { return has_alt || mixed_delay_pending; }
+
+    void closeLoserAsync(Leg loser) {
+        if (loser == Leg::Curl) {
+            websocket.closeAsync();
+        } else {
+            quic.closeAsync();
+        }
+    }
+
+    void mixedDeclareWinner(Leg winner) {
+        Leg loser;
+        const char* name = nullptr;
+        {
+            std::lock_guard lock(race_mtx);
+            cancelMixedDelayOnly();
+            if (winner == primary_leg) {
+                if (!has_alt) {
+                    return;
+                }
+                loser = Leg::Curl;
+                has_alt = false;
+                name = (winner == Leg::Quic) ? "Quic" : "TCP";
+            } else if (isAlt(winner)) {
+                loser = primary_leg;
+                primary_leg = winner;
+                has_alt = false;
+                name = "TCP";
+            } else {
                 return;
             }
-            if (owner) {
-                owner->handleReceiveSignalResponse(response);
+        }
+        LOGI("mixed: %s won", name);
+        closeLoserAsync(loser);
+    }
+
+    void scheduleMixedTcpFallback() {
+        const int delayMs = Config::Shared().signal.mixedDelay;
+        if (delayMs <= 0) {
+            startMixedTcpFallback();
+            return;
+        }
+        uint64_t gen = 0;
+        {
+            std::lock_guard lock(race_mtx);
+            cancelMixedDelayOnly();
+            mixed_delay_pending = true;
+            gen = mixed_delay_gen.load(std::memory_order_relaxed);
+        }
+        std::weak_ptr<Private> weak = shared_from_this();
+        std::thread([weak, gen, delayMs] {
+            std::this_thread::sleep_for(std::chrono::milliseconds(delayMs));
+            auto self = weak.lock();
+            if (!self) {
+                return;
             }
-            rtc__signal_response__free_unpacked(response, nullptr);
-        });
+            {
+                std::lock_guard lock(self->race_mtx);
+                if (self->mixed_delay_gen.load(std::memory_order_relaxed) != gen) {
+                    return;
+                }
+                self->mixed_delay_pending = false;
+            }
+            self->startMixedTcpFallback();
+        }).detach();
+    }
+
+    void startMixedTcpFallback() {
+        std::string url;
+        std::string sni;
+        int timeout = 0;
+        {
+            std::lock_guard lock(race_mtx);
+            if (user_closed.load() || session_open || has_alt) {
+                return;
+            }
+            cancelMixedDelayOnly();
+            if (quic.readyState() == QuicSocket::State::Open) {
+                return;
+            }
+            if (pending_url.empty()) {
+                return;
+            }
+            url = pending_url;
+            sni = pending_sni;
+            timeout = Config::Shared().signal.connectTimeout;
+        }
+        LOGI("mixed: starting TCP fallback");
+        websocket.setConnectTimeout(timeout);
+        WebSocket::OpenOptions options;
+        options.url = url;
+        options.sni_host = sni;
+        if (!websocket.open(options)) {
+            return;
+        }
+        std::lock_guard lock(race_mtx);
+        if (user_closed.load() || session_open) {
+            websocket.closeAsync();
+            return;
+        }
+        has_alt = true;
+    }
+
+    // Returns true if the caller must not reconnect / fan out onError.
+    bool handleMixedTransportFailure(Leg leg, bool allowQuicFallback) {
+        bool start_tcp = false;
+        {
+            std::lock_guard lock(race_mtx);
+            if (!session_open && mixedMode() && allowQuicFallback && leg == Leg::Quic) {
+                cancelMixedDelayOnly();
+                if (has_alt) {
+                    if (leg == primary_leg) {
+                        primary_leg = Leg::Curl;
+                    }
+                    has_alt = false;
+                    return true;
+                }
+                start_tcp = true;
+            } else if (!session_open && mixedMode() && isAlt(leg)) {
+                has_alt = false;
+                const auto st = quic.readyState();
+                if (st == QuicSocket::State::Connecting || st == QuicSocket::State::Open) {
+                    return true;
+                }
+            }
+        }
+        if (!start_tcp) {
+            return false;
+        }
+        startMixedTcpFallback();
+        std::lock_guard lock(race_mtx);
+        if (has_alt) {
+            primary_leg = Leg::Curl;
+            has_alt = false;
+            return true;
+        }
+        return false;
+    }
+
+    void onTransportOpen(Leg leg) {
+        bool discard_alt = false;
+        bool racing = false;
+        {
+            std::lock_guard lock(race_mtx);
+            if (!isCandidate(leg)) {
+                LOGW("ignore non-candidate open");
+                return;
+            }
+            if (session_open && isAlt(leg)) {
+                has_alt = false;
+                discard_alt = true;
+            } else {
+                racing = isMixedRacing() || isAlt(leg);
+                session_open = true;
+                if (!racing) {
+                    cancelMixedDelayOnly();
+                }
+            }
+        }
+        if (discard_alt) {
+            websocket.closeAsync();
+            return;
+        }
+        if (racing) {
+            mixedDeclareWinner(leg);
+        }
+        state_string = "open";
+    }
+
+    void onTransportClose(Leg leg, int code, bool remote) {
+        {
+            std::lock_guard lock(race_mtx);
+            if (!isCandidate(leg)) {
+                return;
+            }
+        }
+        if (isTokenCode(code)) {
+            cancelMixedRace(false);
+            if (owner) {
+                owner->onError(RtcError::Token);
+            }
+            return;
+        }
+        if (handleMixedTransportFailure(leg, /*allowQuicFallback=*/remote && !user_closed.load())) {
+            return;
+        }
+        {
+            std::lock_guard lock(race_mtx);
+            session_open = false;
+        }
+        state_string = "closed";
+        if (owner && remote && !user_closed.load()) {
+            owner->onReconnect();
+        }
+    }
+
+    void onCurlError(const WebSocket::Error& err) {
+        {
+            std::lock_guard lock(race_mtx);
+            if (!isCandidate(Leg::Curl) || !owner) {
+                return;
+            }
+        }
+        if (isTokenCode(err.httpCode)) {
+            cancelMixedRace(false);
+            owner->onError(RtcError::Token);
+            return;
+        }
+        if (IsCurlSecError(err.curlCode)) {
+            cancelMixedRace(false);
+            owner->onError(RtcError::SSL);
+            return;
+        }
+        if (handleMixedTransportFailure(Leg::Curl, true)) {
+            return;
+        }
+#if defined(LIBCURL_VERSION_MAJOR)
+        if (err.curlCode == CURLE_OPERATION_TIMEDOUT) {
+            cancelMixedRace(false);
+            owner->onError(RtcError::SignalFailed);
+            return;
+        }
+        if (err.curlCode == CURLE_COULDNT_CONNECT || err.curlCode == CURLE_COULDNT_RESOLVE_HOST) {
+            return;
+        }
+#endif
+        if (err.curlCode == static_cast<int>(WebSocket::CloseCode::NeverConnected)) {
+            cancelMixedRace(false);
+            owner->onError(RtcError::SignalFailed);
+            return;
+        }
+    }
+
+    void onQuicError(const QuicSocket::Error& err) {
+        {
+            std::lock_guard lock(race_mtx);
+            if (!isCandidate(Leg::Quic) || !owner) {
+                return;
+            }
+        }
+        if (err.kind == QuicSocket::ErrorKind::Http && isTokenCode(err.httpCode)) {
+            cancelMixedRace(false);
+            owner->onError(RtcError::Token);
+            return;
+        }
+        if (err.kind == QuicSocket::ErrorKind::Ssl) {
+            cancelMixedRace(false);
+            owner->onError(RtcError::SSL);
+            return;
+        }
+        if (handleMixedTransportFailure(Leg::Quic, true)) {
+            return;
+        }
+        if (err.kind == QuicSocket::ErrorKind::Timeout ||
+            err.kind == QuicSocket::ErrorKind::InvalidUrl) {
+            cancelMixedRace(false);
+            owner->onError(RtcError::SignalFailed);
+            return;
+        }
+        if (err.kind == QuicSocket::ErrorKind::Resolve ||
+            err.kind == QuicSocket::ErrorKind::Connect) {
+            return;
+        }
+    }
+
+    void onTransportRecv(Leg leg, std::string data, bool binary) {
+        {
+            std::lock_guard lock(race_mtx);
+            if (leg != primary_leg || !session_open) {
+                return;
+            }
+        }
+        Rtc__SignalResponse* response = nullptr;
+        if (binary) {
+            response = rtc__signal_response__unpack(
+                nullptr,
+                data.size(),
+                reinterpret_cast<const uint8_t*>(data.data()));
+        } else {
+            auto* msg = messageFromJsonString(&rtc__signal_response__descriptor, data);
+            response = reinterpret_cast<Rtc__SignalResponse*>(msg);
+        }
+        if (!response) {
+            LOGW("signal response unpack failed (binary=%d len=%zu)",
+                 binary ? 1 : 0, data.size());
+            return;
+        }
+        if (owner) {
+            owner->handleReceiveSignalResponse(response);
+        }
+        rtc__signal_response__free_unpacked(response, nullptr);
     }
 
     Signal* owner = nullptr;
@@ -187,6 +477,16 @@ public:
 
     Signal::SendRequestFn send_request_fn;
     bff::WebSocket websocket;
+    bff::QuicSocket quic;
+    std::mutex race_mtx;
+    Leg primary_leg = Leg::Curl;
+    bool has_alt = false;
+    bool session_open = false;
+    std::atomic<bool> user_closed{false};
+    std::atomic<uint64_t> mixed_delay_gen{0};
+    bool mixed_delay_pending = false;
+    std::string pending_url;
+    std::string pending_sni;
     std::string client_ip;
     std::string token;
     std::string last_offer;
@@ -225,6 +525,8 @@ Signal::Signal() : d_(std::make_shared<Private>(this)) {
 
 Signal::~Signal() {
     d_->owner = nullptr;
+    d_->user_closed.store(true);
+    d_->cancelMixedDelayOnly();
 }
 
 void Signal::setSendRequestFn(SendRequestFn sendFn) {
