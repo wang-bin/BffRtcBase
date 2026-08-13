@@ -47,6 +47,7 @@ add_library(${PROJECT_NAME} MODULE
     NodeSelector.cpp
     PbCJson.cpp
     rtc.pb-c.c
+    QuicSocket.cpp
     Signal.cpp
     SignalChannel.cpp
     SniUrl.cpp
