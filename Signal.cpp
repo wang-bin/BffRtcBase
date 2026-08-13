@@ -467,6 +467,79 @@ public:
         rtc__signal_response__free_unpacked(response, nullptr);
     }
 
+    void closeAllTransports(bool join) {
+        cancelMixedRace(join);
+        if (join) {
+            websocket.close();
+            quic.close();
+        } else {
+            websocket.closeAsync();
+            quic.closeAsync();
+        }
+        std::lock_guard lock(race_mtx);
+        session_open = false;
+        has_alt = false;
+    }
+
+    bool sendOnPrimary(const std::string& payload, bool binary) {
+        std::lock_guard lock(race_mtx);
+        if (primary_leg == Leg::Quic) {
+            return quic.send(payload, binary);
+        }
+        return websocket.send(payload, binary);
+    }
+
+    bool primaryRunning() const {
+        std::lock_guard lock(race_mtx);
+        return primary_leg == Leg::Quic ? quic.isRunning() : websocket.isRunning();
+    }
+
+    // App thread only: join previous workers, then open per SignalOptions.implementation.
+    bool beginConnect(const std::string& url) {
+        if (!token.empty()) {
+            HttpClient::setAuthToken(token);
+        }
+        closeAllTransports(/*join=*/true);
+        user_closed.store(false);
+
+        const auto& opt = Config::Shared().signal;
+        const std::string tokenUrl = HttpClient::urlWithAuthToken(url);
+        const std::string sni = sniHostForUrl(url, hosts_);
+        websocket.setConnectTimeout(opt.connectTimeout);
+        quic.setConnectTimeout(opt.connectTimeout);
+
+        {
+            std::lock_guard lock(race_mtx);
+            pending_url = tokenUrl;
+            pending_sni = sni;
+            session_open = false;
+            has_alt = false;
+            if (opt.implementation == SignalImplementation::Curl) {
+                primary_leg = Leg::Curl;
+            } else {
+                primary_leg = Leg::Quic;
+            }
+        }
+
+        if (opt.implementation == SignalImplementation::Curl) {
+            WebSocket::OpenOptions options;
+            options.url = tokenUrl;
+            options.sni_host = sni;
+            return websocket.open(options);
+        }
+
+        QuicSocket::OpenOptions options;
+        options.url = tokenUrl;
+        options.sni_host = sni;
+        if (!quic.open(options)) {
+            return false;
+        }
+        if (opt.implementation == SignalImplementation::Mixed) {
+            scheduleMixedTcpFallback();
+        }
+        return true;
+    }
+
     Signal* owner = nullptr;
     mutable std::mutex listeners_mtx;
     std::unordered_map<int, SignalListener*> listeners;
@@ -478,7 +551,7 @@ public:
     Signal::SendRequestFn send_request_fn;
     bff::WebSocket websocket;
     bff::QuicSocket quic;
-    std::mutex race_mtx;
+    mutable std::mutex race_mtx;
     Leg primary_leg = Leg::Curl;
     bool has_alt = false;
     bool session_open = false;
@@ -536,24 +609,17 @@ void Signal::setSendRequestFn(SendRequestFn sendFn) {
 bool Signal::connect(const std::string& url) {
     d_->server_url_ = url;
     d_->state_string = "connecting";
-    // Match JsppWebSocket connect: rewrite token= query with refreshed token.
-    if (!d_->token.empty()) {
-        HttpClient::setAuthToken(d_->token);
-    }
-
-    WebSocket::OpenOptions options;
-    options.url = HttpClient::urlWithAuthToken(url);
-    options.sni_host = sniHostForUrl(url, d_->hosts_);
-    return d_->websocket.open(options);
+    return d_->beginConnect(url);
 }
 
 void Signal::disconnect() {
+    d_->user_closed.store(true);
     d_->state_string = "closing";
-    d_->websocket.close();
+    d_->closeAllTransports(/*join=*/true);
 }
 
 bool Signal::isConnected() const {
-    return d_->websocket.isRunning();
+    return d_->primaryRunning();
 }
 
 void Signal::setListener(int channel, SignalListener* listener) {
@@ -675,10 +741,7 @@ void Signal::connectBestUrl(const std::string& serverUrl,
             d->last_code = 0;
 
             d->state_string = "connecting";
-            WebSocket::OpenOptions options;
-            options.url = bestUrl;
-            options.sni_host = sniHostForUrl(bestUrl, d->hosts_);
-            d->websocket.open(options);
+            d->beginConnect(bestUrl);
 
             if (completionHandler) {
                 completionHandler(bestUrl, hosts);
@@ -1154,14 +1217,14 @@ bool Signal::sendRequest(Rtc__SignalRequest& req, bool important) {
         d_->important_reqs[req.id] = true;
     }
 
-    if (d_->websocket.isRunning()) {
+    if (d_->primaryRunning()) {
         if (d_->use_json) {
             std::string payload;
             if (!messageToJsonString(&req.base, &payload)) {
                 LOGW("signal request toJson failed id=%u channel=%u", req.id, req.channel);
                 return false;
             }
-            return d_->websocket.send(payload, /*binary=*/false);
+            return d_->sendOnPrimary(payload, /*binary=*/false);
         }
 
         const size_t packedSize = rtc__signal_request__get_packed_size(&req);
@@ -1175,7 +1238,7 @@ bool Signal::sendRequest(Rtc__SignalRequest& req, bool important) {
         if (wrote != packedSize) {
             return false;
         }
-        return d_->websocket.send(payload, /*binary=*/true);
+        return d_->sendOnPrimary(payload, /*binary=*/true);
     }
 
     if (!d_->send_request_fn) {
