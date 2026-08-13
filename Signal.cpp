@@ -106,6 +106,19 @@ static std::map<std::string, int> nodeRttsByIp(const bff::NodeSelector::Rtts& rt
     return byIp;
 }
 
+static Rtc__IcePolicy toPbIcePolicy(bff::RtcIcePolicy p) {
+    switch (p) {
+        case bff::RtcIcePolicy::None: return RTC__ICE_POLICY__ICE_POLICY_NONE;
+        case bff::RtcIcePolicy::All: return RTC__ICE_POLICY__ICE_POLICY_ALL;
+        case bff::RtcIcePolicy::NoHost: return RTC__ICE_POLICY__ICE_POLICY_NO_HOST;
+        case bff::RtcIcePolicy::Relay: return RTC__ICE_POLICY__ICE_POLICY_RELAY;
+        case bff::RtcIcePolicy::UDP: return RTC__ICE_POLICY__ICE_POLICY_RELAY_UDP;
+        case bff::RtcIcePolicy::TCP: return RTC__ICE_POLICY__ICE_POLICY_RELAY_TCP;
+        case bff::RtcIcePolicy::TLS: return RTC__ICE_POLICY__ICE_POLICY_RELAY_TLS;
+    }
+    return RTC__ICE_POLICY__ICE_POLICY_ALL;
+}
+
 } // anonymous namespace
 
 namespace bff {
@@ -580,7 +593,44 @@ public:
     std::optional<Location> location;
     bool auto_media_join = true;
     bool join_requested = false;
+    bool recreating = false;
+    bool subscribing = false;
     std::atomic_bool join_all_requested{false};
+
+    // Stack-backed Options for join/recreate; pointers are valid until sendRequest returns.
+    struct ReqOptions {
+        Rtc__Options opts = RTC__OPTIONS__INIT;
+        Rtc__Location loc = RTC__LOCATION__INIT;
+        std::vector<std::string> codecs;
+        std::vector<char*> codec_ptrs;
+
+        ReqOptions(Private& d, bool recreatingFlag) {
+            if (d.vcodecs.empty()) {
+                codecs.emplace_back("h264");
+            } else {
+                codecs = d.vcodecs;
+            }
+            codecs.emplace_back("opus");
+            codec_ptrs.reserve(codecs.size());
+            for (auto& c : codecs) {
+                codec_ptrs.push_back(c.data());
+            }
+            opts.n_codecs = codec_ptrs.size();
+            opts.codecs = codec_ptrs.data();
+            opts.auto_subscribe = (Config::Shared().signal.autoSubscribe || d.subscribing) ? 1 : 0;
+            opts.publishing_audio = 1;
+            opts.publishing_video = 1;
+            opts.recreating = recreatingFlag ? 1 : 0;
+            opts.ip = const_cast<char*>(d.node_selector.bestNodeNegotiated().c_str());
+            opts.ice_policy = toPbIcePolicy(Config::Shared().icePolicy);
+            opts.video_orientation = d.orientation ? 1 : 0;
+            if (d.location) {
+                loc.latitude = d.location->latitude;
+                loc.longitude = d.location->longitude;
+                opts.location = &loc;
+            }
+        }
+    };
     std::mutex node_rtts_mtx;
     NodeSelector::Rtts node_rtts;
     std::set<int> node_rtts_sent_channels;
@@ -736,6 +786,7 @@ void Signal::connectBestUrl(const std::string& serverUrl,
             }
             d->last_offer.clear();
             d->auto_media_join = true;
+            d->subscribing = false;
             d->join_all_requested.store(false);
             d->reconnect_count = 0;
             d->last_code = 0;
@@ -836,23 +887,11 @@ bool Signal::joinAllChannelsIfNeeded() {
 void Signal::sendJoin(int channel) {
     d_->join_requested = true;
 
-    // The media node is owned/selected by NodeSelector and shared by all channels.
-    const std::string& node = d_->node_selector.bestNodeNegotiated();
-    Rtc__Options join = RTC__OPTIONS__INIT;
-    join.ip = const_cast<char*>(node.c_str());
-    join.video_orientation = d_->orientation;
-
-    Rtc__Location loc = RTC__LOCATION__INIT;
-    if (d_->location) {
-        loc.latitude = d_->location->latitude;
-        loc.longitude = d_->location->longitude;
-        join.location = &loc;
-    }
-
+    Private::ReqOptions join(*d_, d_->recreating);
     Rtc__SignalRequest req = RTC__SIGNAL_REQUEST__INIT;
     req.channel = static_cast<uint32_t>(channel);
     req.message_case = RTC__SIGNAL_REQUEST__MESSAGE_JOIN;
-    req.join = &join;
+    req.join = &join.opts;
     sendRequest(req, true);
 }
 
@@ -883,13 +922,13 @@ void Signal::srtpKey(const std::string& key, Rtc__SrtpProfile profile, int chann
 }
 
 void Signal::recreate(int channel) {
-    Rtc__Options recreate = RTC__OPTIONS__INIT;
-    recreate.recreating = 1;
+    Private::ReqOptions recreate(*d_, /*recreatingFlag=*/true);
+    d_->recreating = true;
 
     Rtc__SignalRequest req = RTC__SIGNAL_REQUEST__INIT;
     req.channel = static_cast<uint32_t>(channel);
     req.message_case = RTC__SIGNAL_REQUEST__MESSAGE_RECREATE;
-    req.recreate = &recreate;
+    req.recreate = &recreate.opts;
     sendRequest(req);
 }
 
@@ -939,6 +978,8 @@ void Signal::subscribe(bool audio, bool video, int channel) {
     req.message_case = RTC__SIGNAL_REQUEST__MESSAGE_SUBSCRIBE;
     req.subscribe = &subscribe;
     sendRequest(req);
+    // ws 可能未连接，则 join 时用 autoSubscribe 补上.
+    d_->subscribing = audio || video;
 }
 
 void Signal::candidate(const std::string& candidate, int channel) {
@@ -1217,6 +1258,7 @@ bool Signal::sendRequest(Rtc__SignalRequest& req, bool important) {
         d_->important_reqs[req.id] = true;
     }
 
+    bool ok = false;
     if (d_->primaryRunning()) {
         if (d_->use_json) {
             std::string payload;
@@ -1224,27 +1266,32 @@ bool Signal::sendRequest(Rtc__SignalRequest& req, bool important) {
                 LOGW("signal request toJson failed id=%u channel=%u", req.id, req.channel);
                 return false;
             }
-            return d_->sendOnPrimary(payload, /*binary=*/false);
+            ok = d_->sendOnPrimary(payload, /*binary=*/false);
+        } else {
+            const size_t packedSize = rtc__signal_request__get_packed_size(&req);
+            if (packedSize == 0) {
+                return false;
+            }
+            std::string payload(packedSize, '\0');
+            const size_t wrote = rtc__signal_request__pack(
+                &req,
+                reinterpret_cast<uint8_t*>(&payload[0]));
+            if (wrote != packedSize) {
+                return false;
+            }
+            ok = d_->sendOnPrimary(payload, /*binary=*/true);
         }
-
-        const size_t packedSize = rtc__signal_request__get_packed_size(&req);
-        if (packedSize == 0) {
-            return false;
-        }
-        std::string payload(packedSize, '\0');
-        const size_t wrote = rtc__signal_request__pack(
-            &req,
-            reinterpret_cast<uint8_t*>(&payload[0]));
-        if (wrote != packedSize) {
-            return false;
-        }
-        return d_->sendOnPrimary(payload, /*binary=*/true);
+    } else if (d_->send_request_fn) {
+        ok = d_->send_request_fn(req);
     }
 
-    if (!d_->send_request_fn) {
-        return false;
+    // Match ObjC: recreating stays set if Join/Recreate failed to send, so a later join still carries it.
+    if (ok && d_->recreating &&
+        (req.message_case == RTC__SIGNAL_REQUEST__MESSAGE_JOIN ||
+         req.message_case == RTC__SIGNAL_REQUEST__MESSAGE_RECREATE)) {
+        d_->recreating = false;
     }
-    return d_->send_request_fn(req);
+    return ok;
 }
 
 uint32_t Signal::timestampMs32() {
