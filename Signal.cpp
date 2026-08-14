@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -9,6 +10,7 @@
 #include <set>
 #include <thread>
 #include <unordered_map>
+#include <utility>
 
 #include "NodeSelector.h"
 #include "PbCJson.h"
@@ -19,6 +21,10 @@
 #include "json.hpp"
 #include "Log.hpp"
 #define TAG "Signal"
+
+using namespace std;
+using namespace std::chrono;
+using namespace std::chrono_literals;
 
 #if __has_include(<curl/curl.h>)
 #include <curl/curl.h>
@@ -106,6 +112,10 @@ static std::map<std::string, int> nodeRttsByIp(const bff::NodeSelector::Rtts& rt
     return byIp;
 }
 
+static int64_t steadyNowMs() {
+    return steady_clock::now().time_since_epoch() / 1ms;
+}
+
 static Rtc__IcePolicy toPbIcePolicy(bff::RtcIcePolicy p) {
     switch (p) {
         case bff::RtcIcePolicy::None: return RTC__ICE_POLICY__ICE_POLICY_NONE;
@@ -162,7 +172,7 @@ public:
     }
 
     void cancelMixedDelayOnly() {
-        mixed_delay_gen.fetch_add(1, std::memory_order_relaxed);
+        mixed_delay_gen.fetch_add(1, memory_order::relaxed);
         mixed_delay_pending = false;
     }
 
@@ -234,7 +244,7 @@ public:
             std::lock_guard lock(race_mtx);
             cancelMixedDelayOnly();
             mixed_delay_pending = true;
-            gen = mixed_delay_gen.load(std::memory_order_relaxed);
+            gen = mixed_delay_gen.load(memory_order::relaxed);
         }
         std::weak_ptr<Private> weak = shared_from_this();
         std::thread([weak, gen, delayMs] {
@@ -245,7 +255,7 @@ public:
             }
             {
                 std::lock_guard lock(self->race_mtx);
-                if (self->mixed_delay_gen.load(std::memory_order_relaxed) != gen) {
+                if (self->mixed_delay_gen.load(memory_order::relaxed) != gen) {
                     return;
                 }
                 self->mixed_delay_pending = false;
@@ -276,9 +286,10 @@ public:
         }
         LOGI("mixed: starting TCP fallback");
         websocket.setConnectTimeout(timeout);
-        WebSocket::OpenOptions options;
-        options.url = url;
-        options.sni_host = sni;
+        WebSocket::OpenOptions options{
+            .url = url,
+            .sni_host = sni,
+        };
         if (!websocket.open(options)) {
             return;
         }
@@ -353,7 +364,9 @@ public:
         if (racing) {
             mixedDeclareWinner(leg);
         }
+        last_code = 0;
         state_string = "open";
+        startKeepalive();
     }
 
     void onTransportClose(Leg leg, int code, bool remote) {
@@ -364,10 +377,7 @@ public:
             }
         }
         if (isTokenCode(code)) {
-            cancelMixedRace(false);
-            if (owner) {
-                owner->onError(RtcError::Token);
-            }
+            failFatal(RtcError::Token);
             return;
         }
         if (handleMixedTransportFailure(leg, /*allowQuicFallback=*/remote && !user_closed.load())) {
@@ -378,9 +388,8 @@ public:
             session_open = false;
         }
         state_string = "closed";
-        if (owner && remote && !user_closed.load()) {
-            owner->onReconnect();
-        }
+        // Match ObjC: any non-user close reconnects (not only remote/wasClean).
+        scheduleReconnect(Config::Shared().signal.reconnectInterval);
     }
 
     void onCurlError(const WebSocket::Error& err) {
@@ -391,13 +400,11 @@ public:
             }
         }
         if (isTokenCode(err.httpCode)) {
-            cancelMixedRace(false);
-            owner->onError(RtcError::Token);
+            failFatal(RtcError::Token);
             return;
         }
         if (IsCurlSecError(err.curlCode)) {
-            cancelMixedRace(false);
-            owner->onError(RtcError::SSL);
+            failFatal(RtcError::SSL);
             return;
         }
         if (handleMixedTransportFailure(Leg::Curl, true)) {
@@ -405,19 +412,20 @@ public:
         }
 #if defined(LIBCURL_VERSION_MAJOR)
         if (err.curlCode == CURLE_OPERATION_TIMEDOUT) {
-            cancelMixedRace(false);
-            owner->onError(RtcError::SignalFailed);
-            return;
-        }
-        if (err.curlCode == CURLE_COULDNT_CONNECT || err.curlCode == CURLE_COULDNT_RESOLVE_HOST) {
+            failFatal(RtcError::SignalFailed);
             return;
         }
 #endif
-        if (err.curlCode == static_cast<int>(WebSocket::CloseCode::NeverConnected)) {
-            cancelMixedRace(false);
-            owner->onError(RtcError::SignalFailed);
+        if (err.curlCode == to_underlying(WebSocket::CloseCode::NeverConnected)) {
+            failFatal(RtcError::SignalFailed);
             return;
         }
+        {
+            std::lock_guard lock(race_mtx);
+            session_open = false;
+        }
+        // Connect/resolve (EHOSTDOWN) and other transport errors: reconnect, no onError.
+        scheduleReconnect(Config::Shared().signal.reconnectInterval);
     }
 
     void onQuicError(const QuicSocket::Error& err) {
@@ -428,13 +436,11 @@ public:
             }
         }
         if (err.kind == QuicSocket::ErrorKind::Http && isTokenCode(err.httpCode)) {
-            cancelMixedRace(false);
-            owner->onError(RtcError::Token);
+            failFatal(RtcError::Token);
             return;
         }
         if (err.kind == QuicSocket::ErrorKind::Ssl) {
-            cancelMixedRace(false);
-            owner->onError(RtcError::SSL);
+            failFatal(RtcError::SSL);
             return;
         }
         if (handleMixedTransportFailure(Leg::Quic, true)) {
@@ -442,14 +448,14 @@ public:
         }
         if (err.kind == QuicSocket::ErrorKind::Timeout ||
             err.kind == QuicSocket::ErrorKind::InvalidUrl) {
-            cancelMixedRace(false);
-            owner->onError(RtcError::SignalFailed);
+            failFatal(RtcError::SignalFailed);
             return;
         }
-        if (err.kind == QuicSocket::ErrorKind::Resolve ||
-            err.kind == QuicSocket::ErrorKind::Connect) {
-            return;
+        {
+            std::lock_guard lock(race_mtx);
+            session_open = false;
         }
+        scheduleReconnect(Config::Shared().signal.reconnectInterval);
     }
 
     void onTransportRecv(Leg leg, std::string data, bool binary) {
@@ -509,15 +515,19 @@ public:
 
     // App thread only: join previous workers, then open per SignalOptions.implementation.
     bool beginConnect(const std::string& url) {
+        reconnect_gen.fetch_add(1, memory_order::relaxed);
+        stopKeepalive();
         if (!token.empty()) {
             HttpClient::setAuthToken(token);
         }
+        suppress_reconnect.store(true, memory_order::relaxed);
         closeAllTransports(/*join=*/true);
+        suppress_reconnect.store(false, memory_order::relaxed);
         user_closed.store(false);
 
         const auto& opt = Config::Shared().signal;
-        const std::string tokenUrl = HttpClient::urlWithAuthToken(url);
-        const std::string sni = sniHostForUrl(url, hosts_);
+        const string tokenUrl = HttpClient::urlWithAuthToken(url);
+        const string sni = sniHostForUrl(url, hosts_);
         websocket.setConnectTimeout(opt.connectTimeout);
         quic.setConnectTimeout(opt.connectTimeout);
 
@@ -535,15 +545,16 @@ public:
         }
 
         if (opt.implementation == SignalImplementation::Curl) {
-            WebSocket::OpenOptions options;
-            options.url = tokenUrl;
-            options.sni_host = sni;
-            return websocket.open(options);
+            return websocket.open(WebSocket::OpenOptions{
+                .url = tokenUrl,
+                .sni_host = sni,
+            });
         }
 
-        QuicSocket::OpenOptions options;
-        options.url = tokenUrl;
-        options.sni_host = sni;
+        QuicSocket::OpenOptions options{
+            .url = tokenUrl,
+            .sni_host = sni,
+        };
         if (!quic.open(options)) {
             return false;
         }
@@ -551,6 +562,141 @@ public:
             scheduleMixedTcpFallback();
         }
         return true;
+    }
+
+    void stopKeepalive() {
+        keepalive_gen.fetch_add(1, memory_order::relaxed);
+        last_recv_ms.store(-1, memory_order::relaxed);
+    }
+
+    void resetPingTimeout() {
+        last_recv_ms.store(steadyNowMs(), memory_order::relaxed);
+    }
+
+    // Fire ping immediately, then every pingInterval. pingTimeout starts after the first
+    // SignalResponse (same as ObjC resetTimeout).
+    void startKeepalive() {
+        const int interval = Config::Shared().signal.pingInterval;
+        const int timeout = Config::Shared().signal.pingTimeout;
+        const uint64_t gen = keepalive_gen.fetch_add(1, memory_order::relaxed) + 1;
+        last_recv_ms.store(-1, memory_order::relaxed);
+        weak_ptr weak = shared_from_this();
+        thread([weak, gen, interval, timeout] {
+            auto stillAlive = [&]() -> shared_ptr<Private> {
+                auto self = weak.lock();
+                if (!self || self->keepalive_gen.load(memory_order::relaxed) != gen ||
+                    self->user_closed.load() || !self->owner) {
+                    return nullptr;
+                }
+                return self;
+            };
+            if (auto self = stillAlive()) {
+                self->owner->sendPing();
+            } else {
+                return;
+            }
+            auto lastPing = steady_clock::now();
+            while (true) {
+                this_thread::sleep_for(50ms);
+                auto self = stillAlive();
+                if (!self) {
+                    return;
+                }
+                const auto now = steady_clock::now();
+                if (interval > 0 && now - lastPing >= interval * 1ms) {
+                    self.reset();
+                    if (auto live = stillAlive()) {
+                        live->owner->sendPing();
+                        lastPing = now;
+                    } else {
+                        return;
+                    }
+                    continue;
+                }
+                if (timeout > 0) {
+                    const auto recvAt = self->last_recv_ms.load(memory_order::relaxed);
+                    if (recvAt >= 0 && steadyNowMs() - recvAt >= timeout) {
+                        LOGW("ping timeout, reconnect");
+                        self->scheduleReconnect(0);
+                        return;
+                    }
+                }
+            }
+        }).detach();
+    }
+
+    void failFatal(RtcError err) {
+        stopKeepalive();
+        cancelMixedRace(false);
+        {
+            std::lock_guard lock(race_mtx);
+            session_open = false;
+        }
+        if (owner) {
+            owner->onError(err);
+        }
+    }
+
+    // Notify listeners, then beginConnect after delayMs on a worker thread (never join
+    // transports from a curl/quic callback).
+    void scheduleReconnect(int delayMs) {
+        if (user_closed.load() || suppress_reconnect.load(memory_order::relaxed)) {
+            return;
+        }
+        const int maxTimes = Config::Shared().signal.reconnectMaxTimes;
+        if (reconnect_count.load(memory_order::relaxed) >= maxTimes) {
+            LOGW("reconnections has reached %d times, close client", maxTimes);
+            stopKeepalive();
+            suppress_reconnect.store(true, memory_order::relaxed);
+            closeAllTransports(/*join=*/false);
+            {
+                std::lock_guard lock(race_mtx);
+                session_open = false;
+            }
+            state_string = "closed";
+            if (owner) {
+                owner->onError(RtcError::SignalFailed);
+            }
+            return;
+        }
+        const int n = reconnect_count.fetch_add(1, memory_order::relaxed) + 1;
+        LOGI("reconnect %d/%d", n, maxTimes);
+        if (owner) {
+            owner->enumerateListeners([](int, SignalListener* listener) {
+                listener->onReconnect();
+            });
+        }
+        stopKeepalive();
+        cancelMixedRace(false);
+        {
+            std::lock_guard lock(race_mtx);
+            session_open = false;
+        }
+        if (user_closed.load()) {
+            LOGI("signal closed, skip reconnect");
+            return;
+        }
+
+        const uint64_t gen = reconnect_gen.fetch_add(1, memory_order::relaxed) + 1;
+        const string url = server_url_;
+        const int delay = delayMs < 0 ? 0 : delayMs;
+        weak_ptr weak = shared_from_this();
+        thread([weak, gen, delay, url] {
+            if (delay > 0) {
+                this_thread::sleep_for(delay * 1ms);
+            }
+            auto self = weak.lock();
+            if (!self || self->reconnect_gen.load(memory_order::relaxed) != gen ||
+                self->user_closed.load()) {
+                LOGI("signal closed, skip reconnect");
+                return;
+            }
+            if (url.empty() || !self->owner) {
+                return;
+            }
+            self->state_string = "connecting";
+            self->beginConnect(url);
+        }).detach();
     }
 
     Signal* owner = nullptr;
@@ -569,7 +715,11 @@ public:
     bool has_alt = false;
     bool session_open = false;
     std::atomic<bool> user_closed{false};
-    std::atomic<uint64_t> mixed_delay_gen{0};
+    atomic<bool> suppress_reconnect{false};
+    atomic<uint64_t> mixed_delay_gen{0};
+    atomic<uint64_t> keepalive_gen{0};
+    atomic<uint64_t> reconnect_gen{0};
+    atomic<int64_t> last_recv_ms{-1};
     bool mixed_delay_pending = false;
     std::string pending_url;
     std::string pending_sni;
@@ -580,7 +730,7 @@ public:
     std::string state_string;
     std::string host;
     uint32_t port = 0;
-    int reconnect_count = 0;
+    atomic<int> reconnect_count{0};
     int last_code = 0;
     NodeSelector::Hosts hosts_;
     std::string server_url_;
@@ -595,7 +745,7 @@ public:
     bool join_requested = false;
     bool recreating = false;
     bool subscribing = false;
-    std::atomic_bool join_all_requested{false};
+    std::atomic<bool> join_all_requested{false};
 
     // Stack-backed Options for join/recreate; pointers are valid until sendRequest returns.
     struct ReqOptions {
@@ -624,6 +774,7 @@ public:
             opts.ip = const_cast<char*>(d.node_selector.bestNodeNegotiated().c_str());
             opts.ice_policy = toPbIcePolicy(Config::Shared().icePolicy);
             opts.video_orientation = d.orientation ? 1 : 0;
+            // TODO: location
             if (d.location) {
                 loc.latitude = d.location->latitude;
                 loc.longitude = d.location->longitude;
@@ -638,134 +789,136 @@ public:
     NodeSelector node_selector;
 };
 
-Signal::Signal() : d_(std::make_shared<Private>(this)) {
-    auto d = d_;
-    d->node_selector.setUpdateRttsCallback([d](const NodeSelector::Rtts& result) {
+Signal::Signal() : d(std::make_shared<Private>(this)) {
+    d->node_selector.setUpdateRttsCallback([d = d](const NodeSelector::Rtts& result) {
         if (!d->owner) return;
         d->owner->sendNodeRttsToFirstChannel(result);
     });
 }
 
 Signal::~Signal() {
-    d_->owner = nullptr;
-    d_->user_closed.store(true);
-    d_->cancelMixedDelayOnly();
+    d->user_closed.store(true);
+    d->reconnect_gen.fetch_add(1, memory_order::relaxed);
+    d->stopKeepalive();
+    d->cancelMixedDelayOnly();
+    d->owner = nullptr;
 }
 
 void Signal::setSendRequestFn(SendRequestFn sendFn) {
-    d_->send_request_fn = std::move(sendFn);
+    d->send_request_fn = std::move(sendFn);
 }
 
 bool Signal::connect(const std::string& url) {
-    d_->server_url_ = url;
-    d_->state_string = "connecting";
-    return d_->beginConnect(url);
+    d->server_url_ = url;
+    d->state_string = "connecting";
+    return d->beginConnect(url);
 }
 
 void Signal::disconnect() {
-    d_->user_closed.store(true);
-    d_->state_string = "closing";
-    d_->closeAllTransports(/*join=*/true);
+    d->user_closed.store(true);
+    d->reconnect_gen.fetch_add(1, memory_order::relaxed);
+    d->stopKeepalive();
+    d->state_string = "closing";
+    d->closeAllTransports(/*join=*/true);
 }
 
 bool Signal::isConnected() const {
-    return d_->primaryRunning();
+    return d->primaryRunning();
 }
 
 void Signal::setListener(int channel, SignalListener* listener) {
-    std::lock_guard<std::mutex> lock(d_->listeners_mtx);
+    std::lock_guard<std::mutex> lock(d->listeners_mtx);
     if (listener) {
-        d_->listeners[channel] = listener;
+        d->listeners[channel] = listener;
     } else {
-        d_->listeners.erase(channel);
+        d->listeners.erase(channel);
     }
 }
 
 void Signal::removeListener(SignalListener* listener) {
     if (!listener) return;
-    std::lock_guard<std::mutex> lock(d_->listeners_mtx);
-    for (auto it = d_->listeners.begin(); it != d_->listeners.end(); ++it) {
+    std::lock_guard<std::mutex> lock(d->listeners_mtx);
+    for (auto it = d->listeners.begin(); it != d->listeners.end(); ++it) {
         if (it->second == listener) {
-            d_->listeners.erase(it);
+            d->listeners.erase(it);
             return;
         }
     }
 }
 
 uint32_t Signal::rttForChannel(int channel) const {
-    auto it = d_->rtts.find(channel);
-    return it == d_->rtts.end() ? 0 : it->second;
+    auto it = d->rtts.find(channel);
+    return it == d->rtts.end() ? 0 : it->second;
 }
 
 void Signal::setStateString(std::string state) {
-    d_->state_string = std::move(state);
+    d->state_string = std::move(state);
 }
 
 const std::string& Signal::stateString() const {
-    return d_->state_string;
+    return d->state_string;
 }
 
 void Signal::setHostPort(std::string host, uint32_t port) {
-    d_->host = std::move(host);
-    d_->port = port;
+    d->host = std::move(host);
+    d->port = port;
 }
 
 const std::string& Signal::host() const {
-    return d_->host;
+    return d->host;
 }
 
 uint32_t Signal::port() const {
-    return d_->port;
+    return d->port;
 }
 
 void Signal::setVcodecs(std::vector<std::string> vcodecs) {
-    d_->vcodecs = std::move(vcodecs);
+    d->vcodecs = std::move(vcodecs);
 }
 
 const std::vector<std::string>& Signal::vcodecs() const {
-    return d_->vcodecs;
+    return d->vcodecs;
 }
 
 void Signal::setOrientation(bool orientation) {
-    d_->orientation = orientation;
+    d->orientation = orientation;
 }
 
 bool Signal::orientation() const {
-    return d_->orientation;
+    return d->orientation;
 }
 
 void Signal::setLocation(float latitude, float longitude) {
-    d_->location = {latitude, longitude};
+    d->location = {.latitude = latitude, .longitude = longitude};
 }
 
 void Signal::clearLocation() {
-    d_->location.reset();
+    d->location.reset();
 }
 
 void Signal::setUseJson(bool useJson) {
-    d_->use_json = useJson;
+    d->use_json = useJson;
 }
 
 bool Signal::useJson() const {
-    return d_->use_json;
+    return d->use_json;
 }
 
 void Signal::updateNodes(const std::vector<std::string>& servers,
                          const std::string* token,
                          NodeSelector::CompletionCallback completionHandler) {
-    d_->node_selector.updateNodes(servers, token, std::move(completionHandler));
+    d->node_selector.updateNodes(servers, token, std::move(completionHandler));
 }
 
 void Signal::updateNodes(const std::string& server,
                          NodeSelector::CompletionCallback completionHandler) {
-    d_->node_selector.updateNodes(server, std::move(completionHandler));
+    d->node_selector.updateNodes(server, std::move(completionHandler));
 }
 
 void Signal::connectBestUrl(const std::string& serverUrl,
                             NodeSelector::BestUrlCallback completionHandler) {
-    auto d = d_;
     d->node_selector.getBestUrl(serverUrl,
-        [d, completionHandler = std::move(completionHandler)](const std::string& bestUrl, const NodeSelector::Hosts* hosts) mutable {
+        [d = d, completionHandler = std::move(completionHandler)](const std::string& bestUrl, const NodeSelector::Hosts* hosts) mutable {
             if (!d->owner) return;
             d->hosts_.clear();
             if (hosts) {
@@ -788,7 +941,7 @@ void Signal::connectBestUrl(const std::string& serverUrl,
             d->auto_media_join = true;
             d->subscribing = false;
             d->join_all_requested.store(false);
-            d->reconnect_count = 0;
+            d->reconnect_count.store(0);
             d->last_code = 0;
 
             d->state_string = "connecting";
@@ -803,22 +956,22 @@ void Signal::connectBestUrl(const std::string& serverUrl,
 void Signal::sendNodeRttsToFirstChannel(const NodeSelector::Rtts& result) {
     std::vector<int> legacyChannels;
     {
-        std::lock_guard<std::mutex> lock(d_->node_rtts_mtx);
-        if (nodeRttsByIp(d_->node_rtts) == nodeRttsByIp(result)) {
+        std::lock_guard<std::mutex> lock(d->node_rtts_mtx);
+        if (nodeRttsByIp(d->node_rtts) == nodeRttsByIp(result)) {
             LOGD("nodeRtts not changed");
             return;
         }
-        d_->node_rtts = result;
-        d_->node_rtts_sent_channels.clear();
-        legacyChannels.assign(d_->legacy_node_rtts_channels.begin(), d_->legacy_node_rtts_channels.end());
+        d->node_rtts = result;
+        d->node_rtts_sent_channels.clear();
+        legacyChannels.assign(d->legacy_node_rtts_channels.begin(), d->legacy_node_rtts_channels.end());
     }
 
     // rtts are connection-level; sending on a single channel is enough for the server.
     int channel = -1;
     {
-        std::lock_guard<std::mutex> lock(d_->listeners_mtx);
-        if (!d_->listeners.empty()) {
-            channel = d_->listeners.begin()->first;
+        std::lock_guard<std::mutex> lock(d->listeners_mtx);
+        if (!d->listeners.empty()) {
+            channel = d->listeners.begin()->first;
         }
     }
     if (channel >= 0) {
@@ -830,22 +983,22 @@ void Signal::sendNodeRttsToFirstChannel(const NodeSelector::Rtts& result) {
 }
 
 void Signal::applyNodeRtts(const std::vector<std::pair<std::string, int>>& rtts, bool isSelf) {
-    d_->node_selector.applyNodeRtts(rtts, isSelf);
+    d->node_selector.applyNodeRtts(rtts, isSelf);
 }
 
 void Signal::sendNodeRttsForLegacyPeer() {
     std::vector<int> channels;
     {
-        std::lock_guard<std::mutex> lock(d_->listeners_mtx);
-        channels.reserve(d_->listeners.size());
-        for (const auto& kv : d_->listeners) {
+        std::lock_guard<std::mutex> lock(d->listeners_mtx);
+        channels.reserve(d->listeners.size());
+        for (const auto& kv : d->listeners) {
             channels.push_back(kv.first);
         }
     }
     {
-        std::lock_guard<std::mutex> lock(d_->node_rtts_mtx);
+        std::lock_guard<std::mutex> lock(d->node_rtts_mtx);
         for (int channel : channels) {
-            d_->legacy_node_rtts_channels.insert(channel);
+            d->legacy_node_rtts_channels.insert(channel);
         }
     }
     for (int channel : channels) {
@@ -854,7 +1007,7 @@ void Signal::sendNodeRttsForLegacyPeer() {
 }
 
 bool Signal::nodeSelected() const {
-    return !d_->node_selector.bestNodeNegotiated().empty();
+    return !d->node_selector.bestNodeNegotiated().empty();
 }
 
 void Signal::join(int channel) {
@@ -867,14 +1020,14 @@ void Signal::join(int channel) {
 
 bool Signal::joinAllChannelsIfNeeded() {
     bool expected = false;
-    if (!d_->join_all_requested.compare_exchange_strong(expected, true)) {
+    if (!d->join_all_requested.compare_exchange_strong(expected, true)) {
         return false;
     }
     std::vector<int> channels;
     {
-        std::lock_guard<std::mutex> lock(d_->listeners_mtx);
-        channels.reserve(d_->listeners.size());
-        for (const auto& kv : d_->listeners) {
+        std::lock_guard<std::mutex> lock(d->listeners_mtx);
+        channels.reserve(d->listeners.size());
+        for (const auto& kv : d->listeners) {
             channels.push_back(kv.first);
         }
     }
@@ -885,9 +1038,9 @@ bool Signal::joinAllChannelsIfNeeded() {
 }
 
 void Signal::sendJoin(int channel) {
-    d_->join_requested = true;
+    d->join_requested = true;
 
-    Private::ReqOptions join(*d_, d_->recreating);
+    Private::ReqOptions join(*d, d->recreating);
     Rtc__SignalRequest req = RTC__SIGNAL_REQUEST__INIT;
     req.channel = static_cast<uint32_t>(channel);
     req.message_case = RTC__SIGNAL_REQUEST__MESSAGE_JOIN;
@@ -898,12 +1051,12 @@ void Signal::sendJoin(int channel) {
 void Signal::sendCachedNodeRttsIfNeededForChannel(int channel) {
     NodeSelector::Rtts rtts;
     {
-        std::lock_guard<std::mutex> lock(d_->node_rtts_mtx);
-        if (d_->node_rtts.empty() || d_->node_rtts_sent_channels.find(channel) != d_->node_rtts_sent_channels.end()) {
+        std::lock_guard<std::mutex> lock(d->node_rtts_mtx);
+        if (d->node_rtts.empty() || d->node_rtts_sent_channels.find(channel) != d->node_rtts_sent_channels.end()) {
             return;
         }
-        rtts = d_->node_rtts;
-        d_->node_rtts_sent_channels.insert(channel);
+        rtts = d->node_rtts;
+        d->node_rtts_sent_channels.insert(channel);
     }
     nodeRtts(rtts, channel);
 }
@@ -922,8 +1075,8 @@ void Signal::srtpKey(const std::string& key, Rtc__SrtpProfile profile, int chann
 }
 
 void Signal::recreate(int channel) {
-    Private::ReqOptions recreate(*d_, /*recreatingFlag=*/true);
-    d_->recreating = true;
+    Private::ReqOptions recreate(*d, /*recreatingFlag=*/true);
+    d->recreating = true;
 
     Rtc__SignalRequest req = RTC__SIGNAL_REQUEST__INIT;
     req.channel = static_cast<uint32_t>(channel);
@@ -979,7 +1132,7 @@ void Signal::subscribe(bool audio, bool video, int channel) {
     req.subscribe = &subscribe;
     sendRequest(req);
     // ws 可能未连接，则 join 时用 autoSubscribe 补上.
-    d_->subscribing = audio || video;
+    d->subscribing = audio || video;
 }
 
 void Signal::candidate(const std::string& candidate, int channel) {
@@ -1054,17 +1207,18 @@ void Signal::report(const Rtc__Stats* stats, int64_t /*startTimeSinceEpoch*/, in
 
 void Signal::handleReceiveSignalResponse(const Rtc__SignalResponse* signalResponse) {
     if (!signalResponse) return;
+    d->resetPingTimeout();
 
     bool resetReconn = true;
     SignalListener* listener = listenerForChannel(static_cast<int>(signalResponse->channel));
 
     switch (signalResponse->message_case) {
         case RTC__SIGNAL_RESPONSE__MESSAGE_JOINED: {
-            if (!d_->join_requested) {
-                d_->auto_media_join = false;
+            if (!d->join_requested) {
+                d->auto_media_join = false;
             }
             if (listener && signalResponse->joined) {
-                listener->onJoined(signalResponse->joined, d_->auto_media_join);
+                listener->onJoined(signalResponse->joined, d->auto_media_join);
             }
             break;
         }
@@ -1090,19 +1244,19 @@ void Signal::handleReceiveSignalResponse(const Rtc__SignalResponse* signalRespon
             break;
         }
         case RTC__SIGNAL_RESPONSE__MESSAGE_ADDR: {
-            d_->client_ip = signalResponse->addr ? signalResponse->addr : "";
+            d->client_ip = signalResponse->addr ? signalResponse->addr : "";
             enumerateListeners([&](int, SignalListener* l) {
-                l->onChangedAddress(d_->client_ip);
+                l->onChangedAddress(d->client_ip);
             });
             break;
         }
         case RTC__SIGNAL_RESPONSE__MESSAGE_OFFER: {
             const std::string sdp = (signalResponse->offer && signalResponse->offer->sdp)
                 ? signalResponse->offer->sdp : "";
-            if (sdp != d_->last_offer && listener) {
+            if (sdp != d->last_offer && listener) {
                 listener->onOffer(sdp);
             }
-            d_->last_offer = sdp;
+            d->last_offer = sdp;
             break;
         }
         case RTC__SIGNAL_RESPONSE__MESSAGE_ANSWER:
@@ -1131,13 +1285,13 @@ void Signal::handleReceiveSignalResponse(const Rtc__SignalResponse* signalRespon
                 std::string clientIpOwned;
                 if (signalResponse->node_list->client_ip && signalResponse->node_list->client_ip[0]) {
                     clientIpOwned = signalResponse->node_list->client_ip;
-                    d_->client_ip = clientIpOwned;
-                } else if (!d_->client_ip.empty()) {
-                    clientIpOwned = d_->client_ip;
+                    d->client_ip = clientIpOwned;
+                } else if (!d->client_ip.empty()) {
+                    clientIpOwned = d->client_ip;
                 }
                 const std::string* clientIp = clientIpOwned.empty() ? nullptr : &clientIpOwned;
                 // NodeSelector stores the selected node internally for all channels.
-                d_->node_selector.onNodeList(nodes,
+                d->node_selector.onNodeList(nodes,
                                              static_cast<uint16_t>(signalResponse->node_list->stun_port),
                                              clientIp);
             }
@@ -1145,7 +1299,7 @@ void Signal::handleReceiveSignalResponse(const Rtc__SignalResponse* signalRespon
         }
         case RTC__SIGNAL_RESPONSE__MESSAGE_PONG:
             if (signalResponse->pong) {
-                d_->rtts[static_cast<int>(signalResponse->channel)] = timestampMs32() - signalResponse->pong->timestamp;
+                d->rtts[static_cast<int>(signalResponse->channel)] = timestampMs32() - signalResponse->pong->timestamp;
             }
             break;
         case RTC__SIGNAL_RESPONSE__MESSAGE_ADD_TRACK:
@@ -1176,17 +1330,17 @@ void Signal::handleReceiveSignalResponse(const Rtc__SignalResponse* signalRespon
             break;
         case RTC__SIGNAL_RESPONSE__MESSAGE_RESPONSE:
             if (signalResponse->response) {
-                d_->last_code = static_cast<int>(signalResponse->response->code);
-                if (d_->last_code != 200) {
+                d->last_code = static_cast<int>(signalResponse->response->code);
+                if (d->last_code != 200) {
                     // Match ObjC: notify only this channel's listener (not fan-out).
                     // Socket close on these errors is deferred (parity backlog).
-                    if (d_->last_code == 602 || d_->last_code == 603) {
+                    if (d->last_code == 602 || d->last_code == 603) {
                         if (listener) {
                             listener->onError(RtcError::Token);
                         }
                         return;
                     }
-                    if (d_->important_reqs.erase(signalResponse->id) > 0) {
+                    if (d->important_reqs.erase(signalResponse->id) > 0) {
                         if (listener) {
                             listener->onError(RtcError::SignalFailed);
                         }
@@ -1203,24 +1357,43 @@ void Signal::handleReceiveSignalResponse(const Rtc__SignalResponse* signalRespon
             break;
         case RTC__SIGNAL_RESPONSE__MESSAGE_TOKEN:
             // Match ObjC: store token and push to HTTP client for subsequent requests.
-            d_->token = signalResponse->token ? signalResponse->token : "";
-            HttpClient::setAuthToken(d_->token);
+            d->token = signalResponse->token ? signalResponse->token : "";
+            HttpClient::setAuthToken(d->token);
             break;
         default:
             break;
     }
 
-    d_->important_reqs.erase(signalResponse->id);
+    d->important_reqs.erase(signalResponse->id);
     if (resetReconn) {
-        d_->reconnect_count = 0;
+        d->reconnect_count.store(0);
     }
 }
 
 void Signal::onReconnect() {
-    d_->reconnect_count++;
-    enumerateListeners([&](int, SignalListener* listener) {
-        listener->onReconnect();
-    });
+    d->scheduleReconnect(Config::Shared().signal.reconnectInterval);
+}
+
+void Signal::sendPing() {
+    vector<int> channels;
+    {
+        lock_guard lock(d->listeners_mtx);
+        channels.reserve(d->listeners.size());
+        for (const auto& kv : d->listeners) {
+            channels.push_back(kv.first);
+        }
+    }
+    for (int channel : channels) {
+        Rtc__Ping ping = RTC__PING__INIT;
+        ping.timestamp = timestampMs32();
+        ping.rtt = rttForChannel(channel);
+
+        Rtc__SignalRequest req = RTC__SIGNAL_REQUEST__INIT;
+        req.channel = static_cast<uint32_t>(channel);
+        req.message_case = RTC__SIGNAL_REQUEST__MESSAGE_PING;
+        req.ping = &ping;
+        sendRequest(req);
+    }
 }
 
 void Signal::onError(RtcError error) {
@@ -1231,17 +1404,17 @@ void Signal::onError(RtcError error) {
 }
 
 SignalListener* Signal::listenerForChannel(int channel) const {
-    std::lock_guard<std::mutex> lock(d_->listeners_mtx);
-    auto it = d_->listeners.find(channel);
-    return it == d_->listeners.end() ? nullptr : it->second;
+    std::lock_guard<std::mutex> lock(d->listeners_mtx);
+    auto it = d->listeners.find(channel);
+    return it == d->listeners.end() ? nullptr : it->second;
 }
 
 void Signal::enumerateListeners(const std::function<void(int channel, SignalListener*)>& fn) const {
     std::vector<std::pair<int, SignalListener*>> snapshot;
     {
-        std::lock_guard<std::mutex> lock(d_->listeners_mtx);
-        snapshot.reserve(d_->listeners.size());
-        for (const auto& kv : d_->listeners) {
+        std::lock_guard<std::mutex> lock(d->listeners_mtx);
+        snapshot.reserve(d->listeners.size());
+        for (const auto& kv : d->listeners) {
             if (kv.second) {
                 snapshot.push_back(kv);
             }
@@ -1253,20 +1426,20 @@ void Signal::enumerateListeners(const std::function<void(int channel, SignalList
 }
 
 bool Signal::sendRequest(Rtc__SignalRequest& req, bool important) {
-    req.id = d_->msg_id.fetch_add(1);
+    req.id = d->msg_id.fetch_add(1);
     if (important) {
-        d_->important_reqs[req.id] = true;
+        d->important_reqs[req.id] = true;
     }
 
     bool ok = false;
-    if (d_->primaryRunning()) {
-        if (d_->use_json) {
+    if (d->primaryRunning()) {
+        if (d->use_json) {
             std::string payload;
             if (!messageToJsonString(&req.base, &payload)) {
                 LOGW("signal request toJson failed id=%u channel=%u", req.id, req.channel);
                 return false;
             }
-            ok = d_->sendOnPrimary(payload, /*binary=*/false);
+            ok = d->sendOnPrimary(payload, /*binary=*/false);
         } else {
             const size_t packedSize = rtc__signal_request__get_packed_size(&req);
             if (packedSize == 0) {
@@ -1279,25 +1452,23 @@ bool Signal::sendRequest(Rtc__SignalRequest& req, bool important) {
             if (wrote != packedSize) {
                 return false;
             }
-            ok = d_->sendOnPrimary(payload, /*binary=*/true);
+            ok = d->sendOnPrimary(payload, /*binary=*/true);
         }
-    } else if (d_->send_request_fn) {
-        ok = d_->send_request_fn(req);
+    } else if (d->send_request_fn) {
+        ok = d->send_request_fn(req);
     }
 
     // Match ObjC: recreating stays set if Join/Recreate failed to send, so a later join still carries it.
-    if (ok && d_->recreating &&
+    if (ok && d->recreating &&
         (req.message_case == RTC__SIGNAL_REQUEST__MESSAGE_JOIN ||
          req.message_case == RTC__SIGNAL_REQUEST__MESSAGE_RECREATE)) {
-        d_->recreating = false;
+        d->recreating = false;
     }
     return ok;
 }
 
 uint32_t Signal::timestampMs32() {
-    using namespace std::chrono;
-    const auto nowMs = duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
-    return static_cast<uint32_t>(nowMs);
+    return static_cast<uint32_t>(system_clock::now().time_since_epoch() / 1ms);
 }
 
 bool Signal::parseIceCandidateJson(const std::string& json, IceCandidate* out) {

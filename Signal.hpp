@@ -93,6 +93,7 @@ private:
     void enumerateListeners(const std::function<void(int channel, SignalListener*)>& fn) const;
     bool sendRequest(Rtc__SignalRequest& req, bool important = false);
     void sendJoin(int channel);
+    void sendPing();
     void sendCachedNodeRttsIfNeededForChannel(int channel);
     void sendNodeRttsToFirstChannel(const NodeSelector::Rtts& rtts);
 
@@ -101,7 +102,7 @@ private:
 
 private:
     class Private;
-    std::shared_ptr<Private> d_;
+    std::shared_ptr<Private> d;
 };
 
 using SignalPtr = std::shared_ptr<Signal>;
