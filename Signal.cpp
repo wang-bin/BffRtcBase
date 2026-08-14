@@ -1273,10 +1273,14 @@ void Signal::handleReceiveSignalResponse(const Rtc__SignalResponse* signalRespon
         case RTC__SIGNAL_RESPONSE__MESSAGE_OFFER: {
             const std::string sdp = (signalResponse->offer && signalResponse->offer->sdp)
                 ? signalResponse->offer->sdp : "";
-            if (sdp != d->last_offer && listener) {
-                listener->onOffer(sdp);
+            if (sdp == d->last_offer) {
+                LOGW("offer sdp not changed, ignore");
+            } else {
+                if (listener) {
+                    listener->onOffer(sdp);
+                }
+                d->last_offer = sdp;
             }
-            d->last_offer = sdp;
             break;
         }
         case RTC__SIGNAL_RESPONSE__MESSAGE_ANSWER:
