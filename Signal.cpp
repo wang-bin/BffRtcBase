@@ -819,6 +819,7 @@ void Signal::disconnect() {
     d->reconnect_gen.fetch_add(1, memory_order::relaxed);
     d->stopKeepalive();
     d->state_string = "closing";
+    sendLeave();
     d->closeAllTransports(/*join=*/true);
 }
 
@@ -1465,6 +1466,15 @@ bool Signal::sendRequest(Rtc__SignalRequest& req, bool important) {
         d->recreating = false;
     }
     return ok;
+}
+
+void Signal::sendLeave() {
+    Rtc__Leave leave = RTC__LEAVE__INIT;
+    Rtc__SignalRequest req = RTC__SIGNAL_REQUEST__INIT;
+    req.channel = 0;
+    req.message_case = RTC__SIGNAL_REQUEST__MESSAGE_LEAVE;
+    req.leave = &leave;
+    sendRequest(req);
 }
 
 uint32_t Signal::timestampMs32() {
