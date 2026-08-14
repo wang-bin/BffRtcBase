@@ -1349,14 +1349,15 @@ void Signal::handleReceiveSignalResponse(const Rtc__SignalResponse* signalRespon
                 d->last_code = static_cast<int>(signalResponse->response->code);
                 if (d->last_code != 200) {
                     // Match ObjC: notify only this channel's listener (not fan-out).
-                    // Socket close on these errors is deferred (parity backlog).
                     if (d->last_code == 602 || d->last_code == 603) {
+                        d->closeAllTransports(/*join=*/false);
                         if (listener) {
                             listener->onError(RtcError::Token);
                         }
                         return;
                     }
                     if (d->important_reqs.erase(signalResponse->id) > 0) {
+                        d->closeAllTransports(/*join=*/false);
                         if (listener) {
                             listener->onError(RtcError::SignalFailed);
                         }
@@ -1445,9 +1446,6 @@ bool Signal::sendRequest(Rtc__SignalRequest& req, bool important) {
     if (req.id == 0) {
         req.id = d->msg_id.fetch_add(1);
     }
-    if (important) {
-        d->important_reqs[req.id] = true;
-    }
 
     bool ok = false;
     if (d->primaryRunning()) {
@@ -1467,6 +1465,10 @@ bool Signal::sendRequest(Rtc__SignalRequest& req, bool important) {
         }
     } else if (d->send_request_fn) {
         ok = d->send_request_fn(req);
+    }
+
+    if (ok && important) {
+        d->important_reqs[req.id] = true;
     }
 
     // Match ObjC: recreating stays set if Join/Recreate failed to send, so a later join still carries it.
