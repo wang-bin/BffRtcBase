@@ -87,6 +87,9 @@ static uint32_t portFromUrl(const std::string& url) {
 
 static std::string sniHostForUrl(const std::string& url,
                                  const bff::NodeSelector::Hosts& hosts) {
+    if (!bff::Config::Shared().sni) {
+        return {};
+    }
     const auto host = hostFromUrl(url);
     if (host.empty()) {
         return {};
