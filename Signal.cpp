@@ -211,6 +211,15 @@ public:
 
     bool isMixedRacing() const { return has_alt || mixed_delay_pending; }
 
+    void notifyOnQuic(bool quic) {
+        if (!owner) {
+            return;
+        }
+        owner->enumerateListeners([quic](int, SignalListener* listener) {
+            listener->onQuic(quic);
+        });
+    }
+
     void closeLoserAsync(Leg loser) {
         if (loser == Leg::Curl) {
             websocket.closeAsync();
@@ -376,6 +385,12 @@ public:
         if (racing) {
             mixedDeclareWinner(leg);
         }
+        bool quic = false;
+        {
+            std::lock_guard lock(race_mtx);
+            quic = primary_leg == Leg::Quic;
+        }
+        notifyOnQuic(quic);
         last_code = 0;
         state_string = "open";
         startKeepalive();

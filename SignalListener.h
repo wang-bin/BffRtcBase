@@ -35,6 +35,7 @@ public:
     virtual void onLog(const std::string& message, RtcLogLevel level, const std::string& component) {}
     virtual void onError(RtcError error) {}
     virtual void onReconnect() {}
+    virtual void onQuic(bool quic) {}
 };
 
 } // namespace bff
