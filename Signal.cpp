@@ -1108,7 +1108,8 @@ void Signal::offer(const std::string& sdp, int channel) {
     req.channel = static_cast<uint32_t>(channel);
     req.message_case = RTC__SIGNAL_REQUEST__MESSAGE_OFFER;
     req.offer = &offer;
-    sendRequest(req, true);
+    // Mesh publish/subscribe may offer before the peer has joined (814 no selected node).
+    sendRequest(req);
 }
 
 void Signal::answer(const std::string& sdp, int channel) {
