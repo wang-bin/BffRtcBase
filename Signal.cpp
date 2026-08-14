@@ -116,6 +116,15 @@ static int64_t steadyNowMs() {
     return steady_clock::now().time_since_epoch() / 1ms;
 }
 
+static bool packSignalRequest(const Rtc__SignalRequest& req, string* out) {
+    const size_t n = rtc__signal_request__get_packed_size(&req);
+    if (n == 0) {
+        return false;
+    }
+    out->assign(n, '\0');
+    return rtc__signal_request__pack(&req, reinterpret_cast<uint8_t*>(out->data())) == n;
+}
+
 static Rtc__IcePolicy toPbIcePolicy(bff::RtcIcePolicy p) {
     switch (p) {
         case bff::RtcIcePolicy::None: return RTC__ICE_POLICY__ICE_POLICY_NONE;
@@ -706,6 +715,8 @@ public:
 
     std::atomic<uint32_t> msg_id{1};
     std::unordered_map<uint32_t, bool> important_reqs;
+    mutex pending_mtx;
+    vector<string> pending_reqs;
 
     Signal::SendRequestFn send_request_fn;
     bff::WebSocket websocket;
@@ -821,6 +832,8 @@ void Signal::disconnect() {
     d->state_string = "closing";
     sendLeave();
     d->closeAllTransports(/*join=*/true);
+    lock_guard lock(d->pending_mtx);
+    d->pending_reqs.clear();
 }
 
 bool Signal::isConnected() const {
@@ -1115,7 +1128,7 @@ void Signal::negotiation(bool negotiation, int channel) {
     req.channel = static_cast<uint32_t>(channel);
     req.message_case = RTC__SIGNAL_REQUEST__MESSAGE_NEGOTIATION;
     req.negotiation = negotiation ? 1 : 0;
-    sendRequest(req);
+    requestOrAgain(req);
 }
 
 void Signal::subscribe(bool audio, bool video, int channel) {
@@ -1183,7 +1196,8 @@ void Signal::mute(bool on, uint32_t rtpTime, bool video, int channel) {
     req.channel = static_cast<uint32_t>(channel);
     req.message_case = RTC__SIGNAL_REQUEST__MESSAGE_MUTE;
     req.mute = &mute;
-    sendRequest(req);
+    // recreate 重连会在 publish 里发送 mute
+    requestOrAgain(req);
 }
 
 void Signal::selectChannel(int select, int channel) {
@@ -1194,7 +1208,7 @@ void Signal::selectChannel(int select, int channel) {
     req.channel = static_cast<uint32_t>(channel);
     req.message_case = RTC__SIGNAL_REQUEST__MESSAGE_SELECT_CHANNEL;
     req.select_channel = &selectChannel;
-    sendRequest(req);
+    requestOrAgain(req);
 }
 
 void Signal::report(const Rtc__Stats* stats, int64_t /*startTimeSinceEpoch*/, int channel) {
@@ -1221,6 +1235,7 @@ void Signal::handleReceiveSignalResponse(const Rtc__SignalResponse* signalRespon
             if (listener && signalResponse->joined) {
                 listener->onJoined(signalResponse->joined, d->auto_media_join);
             }
+            flushPendingReqs();
             break;
         }
         case RTC__SIGNAL_RESPONSE__MESSAGE_CONFIG:
@@ -1427,7 +1442,9 @@ void Signal::enumerateListeners(const std::function<void(int channel, SignalList
 }
 
 bool Signal::sendRequest(Rtc__SignalRequest& req, bool important) {
-    req.id = d->msg_id.fetch_add(1);
+    if (req.id == 0) {
+        req.id = d->msg_id.fetch_add(1);
+    }
     if (important) {
         d->important_reqs[req.id] = true;
     }
@@ -1435,22 +1452,15 @@ bool Signal::sendRequest(Rtc__SignalRequest& req, bool important) {
     bool ok = false;
     if (d->primaryRunning()) {
         if (d->use_json) {
-            std::string payload;
+            string payload;
             if (!messageToJsonString(&req.base, &payload)) {
                 LOGW("signal request toJson failed id=%u channel=%u", req.id, req.channel);
                 return false;
             }
             ok = d->sendOnPrimary(payload, /*binary=*/false);
         } else {
-            const size_t packedSize = rtc__signal_request__get_packed_size(&req);
-            if (packedSize == 0) {
-                return false;
-            }
-            std::string payload(packedSize, '\0');
-            const size_t wrote = rtc__signal_request__pack(
-                &req,
-                reinterpret_cast<uint8_t*>(&payload[0]));
-            if (wrote != packedSize) {
+            string payload;
+            if (!packSignalRequest(req, &payload)) {
                 return false;
             }
             ok = d->sendOnPrimary(payload, /*binary=*/true);
@@ -1468,6 +1478,20 @@ bool Signal::sendRequest(Rtc__SignalRequest& req, bool important) {
     return ok;
 }
 
+bool Signal::requestOrAgain(Rtc__SignalRequest& req) {
+    if (sendRequest(req)) {
+        return true;
+    }
+    LOGW("Failed to send (%u:%u), try again later", req.id, req.channel);
+    string packed;
+    if (!packSignalRequest(req, &packed)) {
+        return false;
+    }
+    lock_guard lock(d->pending_mtx);
+    d->pending_reqs.push_back(std::move(packed));
+    return false;
+}
+
 void Signal::sendLeave() {
     Rtc__Leave leave = RTC__LEAVE__INIT;
     Rtc__SignalRequest req = RTC__SIGNAL_REQUEST__INIT;
@@ -1475,6 +1499,26 @@ void Signal::sendLeave() {
     req.message_case = RTC__SIGNAL_REQUEST__MESSAGE_LEAVE;
     req.leave = &leave;
     sendRequest(req);
+}
+
+void Signal::flushPendingReqs() {
+    vector<string> pending;
+    {
+        lock_guard lock(d->pending_mtx);
+        pending.swap(d->pending_reqs);
+    }
+    for (const auto& bytes : pending) {
+        auto* req = rtc__signal_request__unpack(
+            nullptr,
+            bytes.size(),
+            reinterpret_cast<const uint8_t*>(bytes.data()));
+        if (!req) {
+            continue;
+        }
+        LOGD("resend request <= (%u:%u)", req->id, req->channel);
+        requestOrAgain(*req);
+        rtc__signal_request__free_unpacked(req, nullptr);
+    }
 }
 
 uint32_t Signal::timestampMs32() {

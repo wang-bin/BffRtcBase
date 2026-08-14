@@ -92,8 +92,10 @@ private:
     SignalListener* listenerForChannel(int channel) const;
     void enumerateListeners(const std::function<void(int channel, SignalListener*)>& fn) const;
     bool sendRequest(Rtc__SignalRequest& req, bool important = false);
+    bool requestOrAgain(Rtc__SignalRequest& req);
     void sendJoin(int channel);
     void sendLeave();
+    void flushPendingReqs();
     void sendPing();
     void sendCachedNodeRttsIfNeededForChannel(int channel);
     void sendNodeRttsToFirstChannel(const NodeSelector::Rtts& rtts);
