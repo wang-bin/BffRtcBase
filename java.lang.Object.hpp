@@ -1,3 +1,4 @@
+#if (__ANDROID__ + 0)
 #pragma once
 /*
 public class Object {
@@ -21,3 +22,4 @@ public:
 } // namespace lang
 } // namespace java
 } // namespace jmi
+#endif // __ANDROID__

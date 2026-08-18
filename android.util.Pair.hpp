@@ -1,3 +1,4 @@
+#if (__ANDROID__ + 0)
 #pragma once
 /*
 public class Pair<F, S> {
@@ -36,3 +37,4 @@ public:
 } // namespace util
 } // namespace android
 } // namespace jmi
+#endif // __ANDROID__

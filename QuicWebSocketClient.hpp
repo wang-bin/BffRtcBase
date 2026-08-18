@@ -1,3 +1,4 @@
+#if (__ANDROID__ + 0)
 #pragma once
 /*
 package com.jspp.avrtcsdk.impl;
@@ -28,3 +29,4 @@ public:
 };
 
 } // namespace jmi
+#endif // __ANDROID__

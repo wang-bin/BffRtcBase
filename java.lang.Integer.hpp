@@ -1,3 +1,4 @@
+#if (__ANDROID__ + 0)
 #pragma once
 /*
 public final class Integer extends Number implements Comparable<Integer> {
@@ -22,3 +23,4 @@ public:
 } // namespace lang
 } // namespace java
 } // namespace jmi
+#endif // __ANDROID__

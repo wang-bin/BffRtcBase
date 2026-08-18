@@ -1,3 +1,4 @@
+#if (__ANDROID__ + 0)
 /*
  * AND: Android Native Dev in Modern C++ based on JMI
  * Copyright (C) 2018-2026 Wang Bin - wbsecg1@gmail.com
@@ -56,3 +57,4 @@
         struct MT : MethodTag { static const char* name() {return kName;}}; \
         return callStatic<R, MT> ARG_V; \
     }
+#endif // __ANDROID__
