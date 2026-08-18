@@ -8,8 +8,11 @@
 #include "stun_test.h"
 #include "Log.hpp"
 #include "jmi.h"
+#include "android.util.Pair.hpp"
+#include "FileLogger.hpp"
+#include "java.lang.Integer.hpp"
 
-using  namespace std;
+using namespace std;
 
 #define JSPPRTC_JNI_FUNC(Name) Java_com_jspp_avrtcsdk_impl_##Name
 #define JSPPRTC_JNI(Return, Name, ...) \
@@ -17,12 +20,49 @@ using  namespace std;
 #define JSPPRTC_JNI_S(Return, Name, ...) \
     JNIEXPORT Return JNICALL JSPPRTC_JNI_FUNC(Name) (JNIEnv *env, jclass clazz, ##__VA_ARGS__)
 
+namespace {
+
+set<string> to_servers(JNIEnv *env, jobjectArray jservers) {
+    set<string> servers;
+    if (!jservers) {
+        return servers;
+    }
+    const jsize len = env->GetArrayLength(jservers);
+    for (jsize i = 0; i < len; ++i) {
+        servers.insert(jmi::to_string(static_cast<jstring>(env->GetObjectArrayElement(jservers, i)), env));
+    }
+    return servers;
+}
+
+void to_rtts(vector<pair<string, int>> &p, JNIEnv *env, jobjectArray ja) {
+    p.clear();
+    if (!ja) {
+        return;
+    }
+    const jsize n = env->GetArrayLength(ja);
+    p.reserve(static_cast<size_t>(n));
+    for (jsize i = 0; i < n; ++i) {
+        jmi::android::util::Pair row(env->GetObjectArrayElement(ja, i));
+        if (!row) {
+            continue;
+        }
+        const auto second = row.second();
+        if (!second || !env->IsInstanceOf(second.id(), jmi::java::lang::Integer())) {
+            continue;
+        }
+        jmi::java::lang::Integer rtt(second.id(), false);
+        p.emplace_back(row.first().toString(), rtt.intValue());
+    }
+}
+
+} // namespace
+
 extern "C" {
 
-jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved)
+jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved)
 {
-    JNIEnv* env = nullptr;
-    if (vm->GetEnv((void**) &env, JNI_VERSION_1_4) != JNI_OK || !env) {
+    JNIEnv *env = nullptr;
+    if (vm->GetEnv((void **)&env, JNI_VERSION_1_4) != JNI_OK || !env) {
         return -1;
     }
     jmi::javaVM(vm);
@@ -30,124 +70,58 @@ jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved)
 }
 
 JSPPRTC_JNI_S(jstring, StunUtil_nativeGetIpFromStun, jstring server, jint timeoutMs) {
-    const char *cstr = env->GetStringUTFChars(server, nullptr);
-    set<string> servers{cstr};
-    env->ReleaseStringUTFChars(server, cstr);
+    set<string> servers{jmi::to_string(server, env)};
     string clientIp;
     auto sorted = SortStun(servers, timeoutMs, &clientIp);
     if (sorted.empty()) {
         __android_log_print(ANDROID_LOG_WARN, "JsppPeerconnect", "no stun server is reachable");
         return nullptr;
     }
-    return env->NewStringUTF(clientIp.c_str());
+    return jmi::from_string(clientIp, env);
 }
 
 JSPPRTC_JNI_S(jstring, StunUtil_nativeFindBestStunServer, jobjectArray jservers, jint timeoutMs) {
-    jsize len = env->GetArrayLength(jservers);
-    set<string> servers;
-    for (jsize i = 0; i < len; ++i) {
-        const auto node = (jstring)env->GetObjectArrayElement(jservers, i);
-        const char* cstr = env->GetStringUTFChars(node, nullptr);
-        servers.insert(cstr);
-        env->ReleaseStringUTFChars(node, cstr);
-        env->DeleteLocalRef(node);
-    }
     string clientIp;
-    string res = QueryFastestStun(servers, timeoutMs, &clientIp);
+    string res = QueryFastestStun(to_servers(env, jservers), timeoutMs, &clientIp);
     if (res.empty()) {
         return nullptr;
     }
-    return env->NewStringUTF(res.c_str());
+    return jmi::from_string(res, env);
 }
 
 JSPPRTC_JNI_S(jobjectArray, StunUtil_nativeSortStunServers, jobjectArray jservers, jint timeoutMs) {
-    jsize len = env->GetArrayLength(jservers);
-    set<string> servers;
-    for (jsize i = 0; i < len; ++i) {
-        const auto node = (jstring) env->GetObjectArrayElement(jservers, i);
-        const char *cstr = env->GetStringUTFChars(node, nullptr);
-        servers.emplace(cstr);
-        env->ReleaseStringUTFChars(node, cstr);
-        env->DeleteLocalRef(node);
-    }
     string clientIp;
-    auto sorted = SortStun(servers, timeoutMs, &clientIp);
+    auto sorted = SortStun(to_servers(env, jservers), timeoutMs, &clientIp);
     if (sorted.empty()) {
         __android_log_print(ANDROID_LOG_WARN, "JsppPeerconnect", "no stun server is reachable");
         return nullptr;
     }
-    // return Pair<String, Integer>[]
-    jclass pairCls = env->FindClass("android/util/Pair");
-    jmethodID pairCtor = env->GetMethodID(pairCls, "<init>",
-                                          "(Ljava/lang/Object;Ljava/lang/Object;)V");
-    jclass integerCls = env->FindClass("java/lang/Integer");
-    jmethodID integerCtor = env->GetMethodID(integerCls, "<init>", "(I)V");
-    jobjectArray jres = env->NewObjectArray(sorted.size(), pairCls, nullptr);
-    for (size_t i = 0; i < sorted.size(); ++i) {
-        jstring node = env->NewStringUTF(sorted[i].first.c_str());
-        jobject rtt = env->NewObject(integerCls, integerCtor, sorted[i].second);
-        jobject ret = env->NewObject(pairCls, pairCtor, node, rtt);
-        env->SetObjectArrayElement(jres, i, ret);
-        env->DeleteLocalRef(node);
-        env->DeleteLocalRef(rtt);
-        env->DeleteLocalRef(ret);
+    vector<jmi::android::util::Pair> rows;
+    rows.reserve(sorted.size());
+    for (const auto &item : sorted) {
+        rows.push_back(jmi::android::util::Pair::of(item.first, item.second));
     }
-
-    return jres;
-}
-
-static void to(vector<pair<string, int>>& p, JNIEnv *env, jobjectArray ja)
-{
-    p.clear();
-    jclass pairCls = env->FindClass("android/util/Pair");
-    jfieldID firstField = env->GetFieldID(pairCls, "first", "Ljava/lang/Object;");
-    jfieldID secondField = env->GetFieldID(pairCls, "second", "Ljava/lang/Object;");
-    jclass integerClass = env->FindClass("java/lang/Integer");
-    jmethodID intValue = env->GetMethodID(integerClass, "intValue", "()I");
-    for (jsize i = 0; i < env->GetArrayLength(ja); ++i) {
-        jobject jpair = env->GetObjectArrayElement(ja, i);
-        jstring node = (jstring) env->GetObjectField(jpair, firstField);
-        jobject jRtt = env->GetObjectField(jpair, secondField);
-        jclass objClass = env->GetObjectClass(jRtt);
-        if (!env->IsSameObject(objClass, integerClass)) {
-            continue;
-        }
-        env->DeleteLocalRef(objClass);
-        jint rtt = env->CallIntMethod(jRtt, intValue);
-        const char *cstr = env->GetStringUTFChars(node, nullptr);
-        p.emplace_back(cstr, rtt);
-        env->ReleaseStringUTFChars(node, cstr);
-    }
-    env->DeleteLocalRef(integerClass);
-    env->DeleteLocalRef(pairCls);
+    return static_cast<jobjectArray>(jmi::detail::to_jarray(env, rows));
 }
 
 JSPPRTC_JNI_S(jstring, StunUtil_nativeFindBestNode, jobjectArray jRtts1, jobjectArray jRtts2) {
-    // TODO: implement nativeFindBestNode()
-    // jRtts1 and jRtts2 are Pair<String, Integer>[], convert to vector<pair<string, int>>
     vector<pair<string, int>> rtts1, rtts2;
-    to(rtts1, env, jRtts1);
-    to(rtts2, env, jRtts2);
-    const auto node = FindBestNode(rtts1, rtts2);
-    return env->NewStringUTF(node.c_str());
+    to_rtts(rtts1, env, jRtts1);
+    to_rtts(rtts2, env, jRtts2);
+    return jmi::from_string(FindBestNode(rtts1, rtts2), env);
 }
 
 JSPPRTC_JNI_S(void, StunUtil_nativeSetLogger, jobject obj)
 {
     static mutex mtx;
-    static jobject gObj = nullptr;
+    static jmi::FileLogger gLogger;
 
-    jmethodID onLogMethod = nullptr;
     {
         [[maybe_unused]] const scoped_lock __(mtx);
-        if (gObj) {
-            env->DeleteGlobalRef(gObj);
-            gObj = nullptr;
-        }
-        if (obj) {
-            jmi::LocalRef k = env->GetObjectClass(obj);
-            onLogMethod = env->GetMethodID(k.get<jclass>(), "onLog", "(Ljava/lang/String;ILjava/lang/String;)V");
-            gObj = env->NewGlobalRef(obj);
+        gLogger.reset(obj, env);
+        if (gLogger) {
+            // FindClass must run on this JNI thread, not a later attached native logger thread.
+            (void)jclass(gLogger);
         }
     }
 
@@ -156,28 +130,12 @@ JSPPRTC_JNI_S(void, StunUtil_nativeSetLogger, jobject obj)
         return;
     }
 
-    bff::SetLogger([onLogMethod](bff::LogLevel level, const char* tag, const char* msg) {
+    bff::SetLogger([](bff::LogLevel level, const char *tag, const char *msg) {
         [[maybe_unused]] const scoped_lock __(mtx);
-        if (!gObj) {
+        if (!gLogger || !jmi::getEnv()) {
             return;
         }
-        auto env = jmi::getEnv();
-        if (!env) {
-            return;
-        }
-        // Native threads keep a pending Java exception until it is cleared.
-        // Logging (or any JNI call) with a pending exception aborts ART.
-        if (env->ExceptionCheck()) {
-            env->ExceptionDescribe();
-            env->ExceptionClear();
-        }
-        jmi::LocalRef message = jmi::from_string(msg, env);
-        jmi::LocalRef jtag = jmi::from_string(tag, env);
-        env->CallVoidMethod(gObj, onLogMethod, message.get<jstring>(), level, jtag.get<jstring>());
-        if (env->ExceptionCheck()) {
-            env->ExceptionDescribe();
-            env->ExceptionClear();
-        }
+        gLogger.onLog(msg ? msg : "", static_cast<jint>(level), tag ? tag : "");
     });
 }
 } // extern "C"

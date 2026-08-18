@@ -3,7 +3,6 @@
 #include <jni.h>
 
 #include <android/log.h>
-#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -12,7 +11,7 @@
 
 #include "WebSocket.h"
 #include "Cert.h"
-#include "jmi.h"
+#include "CurlWebSocketClient.hpp"
 
 namespace {
 
@@ -24,85 +23,46 @@ constexpr const char *kTag = "CurlWebSocket";
 
 struct NativeWebSocket {
     std::unique_ptr<bff::WebSocket> ws;
-    JavaVM *vm = nullptr;
-    jobject java_client = nullptr;
-    jmethodID mid_open = nullptr;
-    jmethodID mid_message = nullptr;
-    jmethodID mid_close = nullptr;
-    jmethodID mid_error = nullptr;
+    jmi::CurlWebSocketClient java_client;
 };
 
 std::mutex g_mutex;
 std::vector<NativeWebSocket *> g_live;
 
-void cacheMethodIds(JNIEnv *env, NativeWebSocket *native_ws) {
-    jclass cls = env->GetObjectClass(native_ws->java_client);
-    native_ws->mid_open = env->GetMethodID(cls, "dispatchOpen", "()V");
-    native_ws->mid_message = env->GetMethodID(cls, "dispatchMessage", "([BZ)V");
-    native_ws->mid_close = env->GetMethodID(cls, "dispatchClose", "(ILjava/lang/String;Z)V");
-    native_ws->mid_error = env->GetMethodID(cls, "dispatchError", "(IILjava/lang/String;)V");
-    env->DeleteLocalRef(cls);
-}
-
-void clearJniException(JNIEnv *env) {
-    if (env != nullptr && env->ExceptionCheck()) {
-        env->ExceptionDescribe();
-        env->ExceptionClear();
-    }
-}
-
-void callOnNativeThread(NativeWebSocket *native_ws, const std::function<void(JNIEnv *)> &fn) {
-    if (!native_ws || !native_ws->java_client || !native_ws->vm) {
+void dispatchBytes(NativeWebSocket *native_ws, const std::string &payload, bool binary) {
+    if (!native_ws || !native_ws->java_client || !jmi::getEnv()) {
         return;
     }
-    JNIEnv *env = nullptr;
-    const bool attached = native_ws->vm->GetEnv(reinterpret_cast<void **>(&env), JNI_VERSION_1_4) == JNI_EDETACHED;
-    if (attached) {
-        native_ws->vm->AttachCurrentThread(&env, nullptr);
-    }
-    if (env) {
-        clearJniException(env);
-        fn(env);
-        clearJniException(env);
-    }
-    if (attached) {
-        native_ws->vm->DetachCurrentThread();
-    }
+    std::vector<jbyte> bytes(payload.begin(), payload.end());
+    native_ws->java_client.dispatchMessage(bytes, static_cast<jboolean>(binary));
 }
 
 void wireCallbacks(NativeWebSocket *native_ws) {
     native_ws->ws->setOnOpen([native_ws]() {
-        callOnNativeThread(native_ws, [native_ws](JNIEnv *env) {
-            env->CallVoidMethod(native_ws->java_client, native_ws->mid_open);
-        });
+        if (!native_ws->java_client || !jmi::getEnv()) {
+            return;
+        }
+        native_ws->java_client.dispatchOpen();
     });
 
     native_ws->ws->setOnRecv([native_ws](std::string data, bool binary) {
-        callOnNativeThread(native_ws, [native_ws, payload = std::move(data), binary](JNIEnv *env) mutable {
-            jbyteArray array = env->NewByteArray(static_cast<jsize>(payload.size()));
-            if (!payload.empty()) {
-                env->SetByteArrayRegion(array, 0, static_cast<jsize>(payload.size()),
-                                        reinterpret_cast<const jbyte *>(payload.data()));
-            }
-            env->CallVoidMethod(native_ws->java_client, native_ws->mid_message, array, binary ? JNI_TRUE : JNI_FALSE);
-            env->DeleteLocalRef(array);
-        });
+        dispatchBytes(native_ws, data, binary);
     });
 
     native_ws->ws->setOnClose([native_ws](bff::WebSocket::CloseCode code, std::string reason, bool remote) {
-        callOnNativeThread(native_ws, [native_ws, code, reason = std::move(reason), remote](JNIEnv *env) mutable {
-            jmi::LocalRef jreason(reason.empty() ? nullptr : jmi::from_string(reason, env), env);
-            env->CallVoidMethod(native_ws->java_client, native_ws->mid_close, std::to_underlying(code),
-                                jreason.get<jstring>(), remote ? JNI_TRUE : JNI_FALSE);
-        });
+        if (!native_ws->java_client || !jmi::getEnv()) {
+            return;
+        }
+        native_ws->java_client.dispatchClose(static_cast<jint>(std::to_underlying(code)), reason,
+                                             static_cast<jboolean>(remote));
     });
 
     native_ws->ws->setOnError([native_ws](bff::WebSocket::Error err) {
-        callOnNativeThread(native_ws, [native_ws, err = std::move(err)](JNIEnv *env) mutable {
-            jmi::LocalRef jerror(err.detail.empty() ? nullptr : jmi::from_string(err.detail, env), env);
-            env->CallVoidMethod(native_ws->java_client, native_ws->mid_error, err.curlCode, err.httpCode,
-                                jerror.get<jstring>());
-        });
+        if (!native_ws->java_client || !jmi::getEnv()) {
+            return;
+        }
+        native_ws->java_client.dispatchError(static_cast<jint>(err.curlCode), static_cast<jint>(err.httpCode),
+                                             err.detail);
     });
 
     native_ws->ws->onCertVerify([](void *ssl_ctx) { return AddCertsToSSL(ssl_ctx); });
@@ -119,9 +79,10 @@ extern "C" {
 CURLWS_JNI(jlong, nativeCreate, jobject client) {
     auto *native_ws = new NativeWebSocket();
     native_ws->ws = std::make_unique<bff::WebSocket>();
-    env->GetJavaVM(&native_ws->vm);
-    native_ws->java_client = env->NewGlobalRef(client);
-    cacheMethodIds(env, native_ws);
+    native_ws->java_client.reset(client, env);
+    // JObject::classId() uses FindClass; that must run here on the JNI thread,
+    // not later on an attached native worker (system class loader).
+    (void)jclass(native_ws->java_client);
     wireCallbacks(native_ws);
 
     std::lock_guard<std::mutex> lock(g_mutex);
@@ -155,10 +116,7 @@ CURLWS_JNI(void, nativeDestroy, jlong handle) {
         }
     }
 
-    if (native_ws->java_client) {
-        env->DeleteGlobalRef(native_ws->java_client);
-        native_ws->java_client = nullptr;
-    }
+    native_ws->java_client.reset(nullptr, env);
     delete native_ws;
 }
 
@@ -204,9 +162,7 @@ CURLWS_JNI(jboolean, nativeOpen, jlong handle, jstring url, jobjectArray header_
         }
     }
 
-    if (sni_host) {
-        options.sni_host = jmi::to_string(sni_host, env);
-    }
+    options.sni_host = jmi::to_string(sni_host, env);
 
     return native_ws->ws->open(options) ? JNI_TRUE : JNI_FALSE;
 }
@@ -216,11 +172,7 @@ CURLWS_JNI(void, nativeClose, jlong handle, jint code, jstring reason) {
     if (!native_ws || !native_ws->ws) {
         return;
     }
-    std::string reason_text;
-    if (reason) {
-        reason_text = jmi::to_string(reason, env);
-    }
-    native_ws->ws->close(static_cast<bff::WebSocket::CloseCode>(code), reason_text);
+    native_ws->ws->close(static_cast<bff::WebSocket::CloseCode>(code), jmi::to_string(reason, env));
 }
 
 CURLWS_JNI(void, nativeCloseAsync, jlong handle, jint code, jstring reason) {
@@ -228,11 +180,7 @@ CURLWS_JNI(void, nativeCloseAsync, jlong handle, jint code, jstring reason) {
     if (!native_ws || !native_ws->ws) {
         return;
     }
-    std::string reason_text;
-    if (reason) {
-        reason_text = jmi::to_string(reason, env);
-    }
-    native_ws->ws->closeAsync(static_cast<bff::WebSocket::CloseCode>(code), reason_text);
+    native_ws->ws->closeAsync(static_cast<bff::WebSocket::CloseCode>(code), jmi::to_string(reason, env));
 }
 
 CURLWS_JNI(jboolean, nativeSend, jlong handle, jbyteArray data, jint offset, jint length,

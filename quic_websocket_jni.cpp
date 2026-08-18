@@ -9,7 +9,6 @@
 #include <cinttypes>
 #include <cstdint>
 #include <cstring>
-#include <functional>
 #include <memory>
 #include <mutex>
 #include <span>
@@ -18,7 +17,7 @@
 #include <utility>
 #include <vector>
 
-#include "jmi.h"
+#include "QuicWebSocketClient.hpp"
 #include "Cert.h"
 #include "Log.hpp"
 #include "quic/socket.hpp"
@@ -256,12 +255,7 @@ bool QueryHasJsonTrue(const std::string &query) {
 
 struct NativeQuicWebSocket {
   std::unique_ptr<quic::Socket> socket;
-  JavaVM *vm = nullptr;
-  jobject java_client = nullptr;
-  jmethodID mid_open = nullptr;
-  jmethodID mid_message = nullptr;
-  jmethodID mid_close = nullptr;
-  jmethodID mid_error = nullptr;
+  jmi::QuicWebSocketClient java_client;
 
   std::atomic<ReadyState> state{ReadyState::Closed};
   std::atomic<bool> close_notified{false};
@@ -281,67 +275,22 @@ struct NativeQuicWebSocket {
 std::mutex g_mutex;
 std::vector<NativeQuicWebSocket *> g_live;
 
-void cacheMethodIds(JNIEnv *env, NativeQuicWebSocket *native_ws) {
-  jclass cls = env->GetObjectClass(native_ws->java_client);
-  native_ws->mid_open = env->GetMethodID(cls, "dispatchOpen", "()V");
-  native_ws->mid_message = env->GetMethodID(cls, "dispatchMessage", "([BZ)V");
-  native_ws->mid_close =
-      env->GetMethodID(cls, "dispatchClose", "(ILjava/lang/String;Z)V");
-  native_ws->mid_error =
-      env->GetMethodID(cls, "dispatchError", "(IILjava/lang/String;)V");
-  env->DeleteLocalRef(cls);
-}
-
-void clearJniException(JNIEnv *env) {
-  if (env != nullptr && env->ExceptionCheck()) {
-    env->ExceptionDescribe();
-    env->ExceptionClear();
-  }
-}
-
-void callOnNativeThread(NativeQuicWebSocket *native_ws,
-                        const std::function<void(JNIEnv *)> &fn) {
-  if (!native_ws || !native_ws->java_client || !native_ws->vm) {
-    return;
-  }
-  JNIEnv *env = nullptr;
-  const bool attached =
-      native_ws->vm->GetEnv(reinterpret_cast<void **>(&env), JNI_VERSION_1_4) ==
-      JNI_EDETACHED;
-  if (attached) {
-    native_ws->vm->AttachCurrentThread(&env, nullptr);
-  }
-  if (env) {
-    clearJniException(env);
-    fn(env);
-    clearJniException(env);
-  }
-  if (attached) {
-    native_ws->vm->DetachCurrentThread();
-  }
-}
-
 void notifyOpen(NativeQuicWebSocket *native_ws) {
   DBG("onOpen");
   native_ws->state.store(ReadyState::Open, std::memory_order_release);
-  callOnNativeThread(native_ws, [native_ws](JNIEnv *env) {
-    env->CallVoidMethod(native_ws->java_client, native_ws->mid_open);
-  });
+  if (!native_ws->java_client || !jmi::getEnv()) {
+    return;
+  }
+  native_ws->java_client.dispatchOpen();
 }
 
 void notifyMessage(NativeQuicWebSocket *native_ws, std::string payload,
                    bool binary) {
-  callOnNativeThread(
-      native_ws, [native_ws, payload = std::move(payload), binary](JNIEnv *env) mutable {
-        jbyteArray array = env->NewByteArray(static_cast<jsize>(payload.size()));
-        if (!payload.empty()) {
-          env->SetByteArrayRegion(array, 0, static_cast<jsize>(payload.size()),
-                                  reinterpret_cast<const jbyte *>(payload.data()));
-        }
-        env->CallVoidMethod(native_ws->java_client, native_ws->mid_message, array,
-                            binary ? JNI_TRUE : JNI_FALSE);
-        env->DeleteLocalRef(array);
-      });
+  if (!native_ws || !native_ws->java_client || !jmi::getEnv()) {
+    return;
+  }
+  std::vector<jbyte> bytes(payload.begin(), payload.end());
+  native_ws->java_client.dispatchMessage(bytes, static_cast<jboolean>(binary));
 }
 
 void notifyClose(NativeQuicWebSocket *native_ws, int code, std::string reason,
@@ -355,13 +304,11 @@ void notifyClose(NativeQuicWebSocket *native_ws, int code, std::string reason,
     reason = remote ? "remote closed" : "closed";
   }
   native_ws->state.store(ReadyState::Closed, std::memory_order_release);
-  callOnNativeThread(
-      native_ws,
-      [native_ws, code, reason = std::move(reason), remote](JNIEnv *env) mutable {
-        jmi::LocalRef jreason(jmi::from_string(reason, env), env);
-        env->CallVoidMethod(native_ws->java_client, native_ws->mid_close, code,
-                            jreason.get<jstring>(), remote ? JNI_TRUE : JNI_FALSE);
-      });
+  if (!native_ws->java_client || !jmi::getEnv()) {
+    return;
+  }
+  native_ws->java_client.dispatchClose(static_cast<jint>(code), reason,
+                                       static_cast<jboolean>(remote));
 }
 
 void notifyError(NativeQuicWebSocket *native_ws, int code, int http_code,
@@ -375,14 +322,11 @@ void notifyError(NativeQuicWebSocket *native_ws, int code, int http_code,
     return;
   }
   native_ws->state.store(ReadyState::Closed, std::memory_order_release);
-  callOnNativeThread(
-      native_ws, [native_ws, code, http_code,
-                  detail = std::move(detail)](JNIEnv *env) mutable {
-        jmi::LocalRef jerror(
-            detail.empty() ? nullptr : jmi::from_string(detail, env), env);
-        env->CallVoidMethod(native_ws->java_client, native_ws->mid_error, code,
-                            http_code, jerror.get<jstring>());
-      });
+  if (!native_ws->java_client || !jmi::getEnv()) {
+    return;
+  }
+  native_ws->java_client.dispatchError(static_cast<jint>(code),
+                                       static_cast<jint>(http_code), detail);
 }
 
 void fail(NativeQuicWebSocket *native_ws, QuicWsError code, std::string detail,
@@ -569,9 +513,10 @@ extern "C" {
 QUICWS_JNI(jlong, nativeCreate, jobject client) {
   auto *native_ws = new NativeQuicWebSocket();
   native_ws->socket = std::make_unique<quic::Socket>();
-  env->GetJavaVM(&native_ws->vm);
-  native_ws->java_client = env->NewGlobalRef(client);
-  cacheMethodIds(env, native_ws);
+  native_ws->java_client.reset(client, env);
+  // JObject::classId() uses FindClass; that must run here on the JNI thread,
+  // not later on an attached native worker (system class loader).
+  (void)jclass(native_ws->java_client);
 
   std::lock_guard lock(g_mutex);
   g_live.push_back(native_ws);
@@ -599,10 +544,7 @@ QUICWS_JNI(void, nativeDestroy, jlong handle) {
     }
   }
 
-  if (native_ws->java_client) {
-    env->DeleteGlobalRef(native_ws->java_client);
-    native_ws->java_client = nullptr;
-  }
+  native_ws->java_client.reset(nullptr, env);
   delete native_ws;
 }
 
@@ -635,14 +577,13 @@ QUICWS_JNI(jboolean, nativeOpen, jlong handle, jstring url,
     return JNI_FALSE;
   }
   native_ws->payload_text = QueryHasJsonTrue(native_ws->params);
-  const bool use_sni = sni_host != nullptr;
   const std::string tls_host = jmi::to_string(sni_host, env);
   DBG("open. sni_host=%s", tls_host.c_str());
 
   native_ws->socket->onCertVerify([](void *ssl_ctx) { return AddCertsToSSL(ssl_ctx); });
   quic::Options opts;
   opts.verify_peer = true;
-  opts.sni = use_sni ? tls_host : std::string{};
+  opts.sni = tls_host;
   native_ws->socket->options(std::move(opts));
 
   wireCallbacks(native_ws);
@@ -681,19 +622,13 @@ QUICWS_JNI(jboolean, nativeOpen, jlong handle, jstring url,
 }
 
 QUICWS_JNI(void, nativeClose, jlong handle, jint code, jstring reason) {
-  std::string reason_text;
-  if (reason) {
-    reason_text = jmi::to_string(reason, env);
-  }
+  std::string reason_text = jmi::to_string(reason, env);
   DBG("close. code=%d, reason=%s", code, reason_text.c_str());
   doClose(fromHandle(handle), code, std::move(reason_text));
 }
 
 QUICWS_JNI(void, nativeCloseAsync, jlong handle, jint code, jstring reason) {
-  std::string reason_text;
-  if (reason) {
-    reason_text = jmi::to_string(reason, env);
-  }
+  std::string reason_text = jmi::to_string(reason, env);
   DBG("closeAsync. code=%d, reason=%s", code, reason_text.c_str());
   // Cooperative close is already non-joining; same as nativeClose.
   doClose(fromHandle(handle), code, std::move(reason_text));

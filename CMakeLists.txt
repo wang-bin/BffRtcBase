@@ -69,6 +69,11 @@ if(ANDROID)
     quic_websocket_jni.cpp
     curl_http_jni.cpp
     jmi.cpp
+    java.lang.Object.cpp
+    java.lang.Integer.cpp
+    CurlWebSocketClient.cpp
+    QuicWebSocketClient.cpp
+    FileLogger.cpp
   )
   if(EXISTS ${LIBS_DIR}/include)
     include_directories(${LIBS_DIR}/include)
