@@ -2,41 +2,20 @@
 
 #include "Cert.h"
 #include "Log.hpp"
-#include "quic/socket.hpp"
+#include "QuicSocket.h"
 
-#include <arpa/inet.h>
-#include <netdb.h>
+#include <errno.h>
 #include <algorithm>
-#include <cerrno>
-#include <cinttypes>
-#include <cstdint>
-#include <cstring>
 #include <memory>
-#include <mutex>
-#include <utility>
-#include <vector>
+#include <string>
 
 #define TAG "quic.ws"
 
 static NSString *const SRWebSocketQuicErrorDomain = @"com.bffmsg.SRWebSocketQuic";
 
-typedef NS_ENUM(NSInteger, SRWebSocketQuicErrorCode) {
-    SRWebSocketQuicErrorInvalidURL = 1001,
-    SRWebSocketQuicErrorResolveHost = 1002,
-    SRWebSocketQuicErrorOpenFailed = 1003,
-    SRWebSocketQuicErrorOpenStreamFailed = 1004,
-    SRWebSocketQuicErrorSendFailed = 1005,
-    SRWebSocketQuicErrorProtocolDecode = 1006,
-    SRWebSocketQuicErrorHandshakeCode = 1007,
-};
-
 namespace {
 
-// Reported to the delegate for abnormal termination; it is not sent as a
-// WebSocket close frame.
-constexpr NSInteger kWebSocketAbnormalClose = 1006;
-
-std::string NSStringToStdString(NSString *string)
+static std::string NSStringToStdString(NSString *string)
 {
     if (!string.length) {
         return {};
@@ -44,7 +23,7 @@ std::string NSStringToStdString(NSString *string)
     return std::string(string.UTF8String);
 }
 
-NSString *StdStringToNSString(const std::string &value)
+static NSString *StdStringToNSString(const std::string &value)
 {
     if (value.empty()) {
         return @"";
@@ -54,99 +33,9 @@ NSString *StdStringToNSString(const std::string &value)
                                   encoding:NSUTF8StringEncoding] ?: @"";
 }
 
-size_t PutUVarIntLen(uint64_t n)
-{
-    if (n < 64) {
-        return 1;
-    }
-    if (n < 16384) {
-        return 2;
-    }
-    if (n < 1073741824ULL) {
-        return 4;
-    }
-    return 8;
-}
-
-uint8_t *PutUVarInt(uint8_t *p, uint64_t n)
-{
-    if (n < 64) {
-        *p++ = static_cast<uint8_t>(n);
-        return p;
-    }
-    if (n < 16384) {
-        p[0] = static_cast<uint8_t>(0x40 | ((n >> 8) & 0x3f));
-        p[1] = static_cast<uint8_t>(n);
-        return p + 2;
-    }
-    if (n < 1073741824ULL) {
-        p[0] = static_cast<uint8_t>(0x80 | ((n >> 24) & 0x3f));
-        p[1] = static_cast<uint8_t>((n >> 16) & 0xff);
-        p[2] = static_cast<uint8_t>((n >> 8) & 0xff);
-        p[3] = static_cast<uint8_t>(n & 0xff);
-        return p + 4;
-    }
-    p[0] = static_cast<uint8_t>(0xc0 | ((n >> 56) & 0x3f));
-    p[1] = static_cast<uint8_t>((n >> 48) & 0xff);
-    p[2] = static_cast<uint8_t>((n >> 40) & 0xff);
-    p[3] = static_cast<uint8_t>((n >> 32) & 0xff);
-    p[4] = static_cast<uint8_t>((n >> 24) & 0xff);
-    p[5] = static_cast<uint8_t>((n >> 16) & 0xff);
-    p[6] = static_cast<uint8_t>((n >> 8) & 0xff);
-    p[7] = static_cast<uint8_t>(n & 0xff);
-    return p + 8;
-}
-
-size_t GetUVarIntLen(uint8_t first)
-{
-    return size_t{1} << (first >> 6);
-}
-
-size_t GetUVarInt(uint64_t *dest, std::span<const uint8_t> p)
-{
-    if (p.empty()) {
-        return 0;
-    }
-    const auto len = GetUVarIntLen(p[0]);
-    if (p.size() < len) {
-        return 0;
-    }
-    uint64_t n = p[0] & 0x3f;
-    for (size_t i = 1; i < len; ++i) {
-        n = (n << 8) | p[i];
-    }
-    *dest = n;
-    return len;
-}
-
-std::vector<uint8_t> WrapVarIntPayload(std::span<const uint8_t> payload)
-{
-    const auto vlen = PutUVarIntLen(payload.size());
-    std::vector<uint8_t> framed(vlen + payload.size());
-    auto *p = PutUVarInt(framed.data(), payload.size());
-    if (!payload.empty()) {
-        std::memcpy(p, payload.data(), payload.size());
-    }
-    return framed;
-}
-
-bool ParseBoolQueryValue(NSString *value)
-{
-    if (!value.length) {
-        return NO;
-    }
-    NSString *lower = value.lowercaseString;
-    return [lower isEqualToString:@"true"] || [lower isEqualToString:@"1"] || [lower isEqualToString:@"yes"];
-}
-
-std::string BuildPathAndQuery(NSURL *url)
-{
-    return NSStringToStdString(url.query.length ? url.query : @"");
-}
-
-std::string QuicSNIHostFromRequest(NSURLRequest *request,
-                                   SRSecurityPolicy *securityPolicy,
-                                   const std::string &urlHost)
+static std::string QuicSNIHostFromRequest(NSURLRequest *request,
+                                          SRSecurityPolicy *securityPolicy,
+                                          const std::string &urlHost)
 {
     BOOL sni = YES;
     NSString *host = nil;
@@ -171,8 +60,6 @@ std::string QuicSNIHostFromRequest(NSURLRequest *request,
         return {};
     }
 
-    // Keep the same fallback as the curl transport for policies that do not
-    // expose a host: an explicit Host header is the mapped TLS identity.
     if (!host.length) {
         for (NSString *key in request.allHTTPHeaderFields) {
             if ([key caseInsensitiveCompare:@"Host"] == NSOrderedSame) {
@@ -195,19 +82,14 @@ std::string QuicSNIHostFromRequest(NSURLRequest *request,
 @property (nonatomic, copy, nullable) NSArray<NSString *> *quic_protocols;
 @property (nonatomic, strong, nullable) SRSecurityPolicy *quic_securityPolicy;
 @property (nonatomic, assign) BOOL quic_opened;
-@property (nonatomic, assign) BOOL quic_payloadText;
+- (instancetype)initQuicWithURLRequest:(NSURLRequest *)request
+                             protocols:(nullable NSArray<NSString *> *)protocols
+                        securityPolicy:(nullable SRSecurityPolicy *)securityPolicy;
 @end
 
 @implementation SRWebSocketQuic {
-    std::unique_ptr<quic::Socket> _socket;
+    std::unique_ptr<bff::QuicSocket> _ws;
     SRReadyState _quic_readyState;
-    std::string _host;
-    std::string _port;
-    std::string _params;
-    int64_t _streamId;
-    bool _receivedStatusCode;
-    std::vector<uint8_t> _rxBuffer;
-    std::mutex _rxMutex;
     BOOL _allowsUntrustedSSLCertificates;
 }
 
@@ -215,82 +97,78 @@ std::string QuicSNIHostFromRequest(NSURLRequest *request,
 
 - (instancetype)initWithURLRequest:(NSURLRequest *)request
 {
-    return [self initWithURLRequest:request protocols:nil securityPolicy:nil];
+    return [self initQuicWithURLRequest:request protocols:nil securityPolicy:nil];
 }
 
 - (instancetype)initWithURLRequest:(NSURLRequest *)request securityPolicy:(SRSecurityPolicy *)securityPolicy
 {
-    return [self initWithURLRequest:request protocols:nil securityPolicy:securityPolicy];
+    return [self initQuicWithURLRequest:request protocols:nil securityPolicy:securityPolicy];
 }
 
 - (instancetype)initWithURLRequest:(NSURLRequest *)request protocols:(NSArray<NSString *> *)protocols
 {
-    return [self initWithURLRequest:request protocols:protocols securityPolicy:nil];
+    return [self initQuicWithURLRequest:request protocols:protocols securityPolicy:nil];
 }
 
-- (instancetype)initWithURLRequest:(NSURLRequest *)request protocols:(NSArray<NSString *> *)protocols allowsUntrustedSSLCertificates:(BOOL)allowsUntrustedSSLCertificates
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-implementations"
+- (instancetype)initWithURLRequest:(NSURLRequest *)request
+                         protocols:(NSArray<NSString *> *)protocols
+  allowsUntrustedSSLCertificates:(BOOL)allowsUntrustedSSLCertificates
 {
-    self = [self initWithURLRequest:request protocols:protocols securityPolicy:nil];
+    self = [self initQuicWithURLRequest:request protocols:protocols securityPolicy:nil];
     if (self) {
         _allowsUntrustedSSLCertificates = allowsUntrustedSSLCertificates;
     }
     return self;
 }
+#pragma clang diagnostic pop
 
-- (instancetype)initWithURLRequest:(NSURLRequest *)request protocols:(NSArray<NSString *> *)protocols securityPolicy:(SRSecurityPolicy *)securityPolicy
+- (instancetype)initWithURLRequest:(NSURLRequest *)request
+                         protocols:(NSArray<NSString *> *)protocols
+                    securityPolicy:(SRSecurityPolicy *)securityPolicy
 {
-    self = [super initWithURLRequest:request protocols:protocols securityPolicy:securityPolicy];
-    if (!self) {
-        return nil;
-    }
-    _quic_request = [request copy];
-    _quic_protocols = [protocols copy];
-    _quic_securityPolicy = securityPolicy;
-    _quic_readyState = SR_CONNECTING;
-    _streamId = quic::kInvalidStream;
-    _receivedStatusCode = false;
-    _socket = std::make_unique<quic::Socket>();
-
-    NSURLComponents *components = [NSURLComponents componentsWithURL:request.URL resolvingAgainstBaseURL:NO];
-    NSString *jsonValue = nil;
-    for (NSURLQueryItem *item in components.queryItems) {
-        if ([item.name.lowercaseString isEqualToString:@"json"]) {
-            jsonValue = item.value;
-            break;
-        }
-    }
-    _quic_payloadText = ParseBoolQueryValue(jsonValue ?: @"");
-    return self;
+    return [self initQuicWithURLRequest:request protocols:protocols securityPolicy:securityPolicy];
 }
 
 - (instancetype)initWithURL:(NSURL *)url
 {
-    return [self initWithURL:url protocols:nil securityPolicy:nil];
+    return [self initWithURLRequest:[NSURLRequest requestWithURL:url] protocols:nil];
 }
 
 - (instancetype)initWithURL:(NSURL *)url protocols:(NSArray<NSString *> *)protocols
 {
-    return [self initWithURL:url protocols:protocols securityPolicy:nil];
+    return [self initWithURLRequest:[NSURLRequest requestWithURL:url] protocols:protocols];
 }
 
 - (instancetype)initWithURL:(NSURL *)url securityPolicy:(SRSecurityPolicy *)securityPolicy
 {
-    return [self initWithURL:url protocols:nil securityPolicy:securityPolicy];
+    return [self initQuicWithURLRequest:[NSURLRequest requestWithURL:url]
+                              protocols:nil
+                         securityPolicy:securityPolicy];
 }
 
-- (instancetype)initWithURL:(NSURL *)url protocols:(NSArray<NSString *> *)protocols allowsUntrustedSSLCertificates:(BOOL)allowsUntrustedSSLCertificates
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-implementations"
+- (instancetype)initWithURL:(NSURL *)url
+                  protocols:(NSArray<NSString *> *)protocols
+allowsUntrustedSSLCertificates:(BOOL)allowsUntrustedSSLCertificates
 {
-    self = [self initWithURL:url protocols:protocols securityPolicy:nil];
+    self = [self initWithURLRequest:[NSURLRequest requestWithURL:url] protocols:protocols];
     if (self) {
         _allowsUntrustedSSLCertificates = allowsUntrustedSSLCertificates;
     }
     return self;
 }
+#pragma clang diagnostic pop
 
-- (instancetype)initWithURL:(NSURL *)url protocols:(NSArray<NSString *> *)protocols securityPolicy:(SRSecurityPolicy *)securityPolicy
+- (instancetype)initWithURL:(NSURL *)url
+                  protocols:(NSArray<NSString *> *)protocols
+             securityPolicy:(SRSecurityPolicy *)securityPolicy
 {
-    NSURLRequest *request = [NSURLRequest requestWithURL:url];
-    return [self initWithURLRequest:request protocols:protocols securityPolicy:securityPolicy];
+    return [self initQuicWithURLRequest:[NSURLRequest requestWithURL:url]
+                              protocols:protocols
+                         securityPolicy:securityPolicy];
 }
 
 #pragma mark - Property overrides
@@ -349,156 +227,51 @@ std::string QuicSNIHostFromRequest(NSURLRequest *request,
     _quic_readyState = readyState;
 }
 
-- (NSError *)makeError:(SRWebSocketQuicErrorCode)code description:(NSString *)description
+- (instancetype)initQuicWithURLRequest:(NSURLRequest *)request
+                             protocols:(nullable NSArray<NSString *> *)protocols
+                        securityPolicy:(nullable SRSecurityPolicy *)securityPolicy
 {
+    if (securityPolicy) {
+        self = [super initWithURLRequest:request protocols:protocols securityPolicy:securityPolicy];
+    } else if (protocols) {
+        self = [super initWithURLRequest:request protocols:protocols];
+    } else {
+        self = [super initWithURLRequest:request];
+    }
+    if (!self) {
+        return nil;
+    }
+    _quic_request = [request copy];
+    _quic_protocols = [protocols copy];
+    _quic_securityPolicy = securityPolicy;
+    _quic_readyState = SR_CONNECTING;
+    return self;
+}
+
+- (NSError *)errorFromQuicSocket
+{
+    if (!_ws) {
+        return [NSError errorWithDomain:SRWebSocketQuicErrorDomain
+                                   code:0
+                               userInfo:@{NSLocalizedDescriptionKey: @"QUIC WebSocket error"}];
+    }
+
+    NSString *message = StdStringToNSString(_ws->lastError());
+    if (!message.length) {
+        message = @"QUIC WebSocket error";
+    }
+
+    NSMutableDictionary *userInfo = [NSMutableDictionary dictionary];
+    userInfo[NSLocalizedDescriptionKey] = message;
+
+    const int httpCode = _ws->lastErrorCode();
+    if (httpCode > 0) {
+        userInfo[@"HTTPResponseStatusCode"] = @(httpCode);
+    }
+
     return [NSError errorWithDomain:SRWebSocketQuicErrorDomain
-                               code:code
-                           userInfo:@{NSLocalizedDescriptionKey: description ?: @"QUIC websocket error"}];
-}
-
-- (void)failWithError:(NSError *)error closeSocket:(BOOL)closeSocket
-{
-    const id httpStatus = error.userInfo[@"HTTPResponseStatusCode"];
-    const int http_code = [httpStatus respondsToSelector:@selector(intValue)]
-        ? [httpStatus intValue]
-        : 0;
-    DBG("onError. code=%ld http=%d detail=%s", (long)error.code, http_code, error.localizedDescription.UTF8String ?: "");
-    [self setQuicReadyState:SR_CLOSED];
-    if (closeSocket && _socket) {
-        _socket->close();
-    }
-    [self performDelegate:^{
-        id<SRWebSocketDelegate> delegate = self.delegate;
-        if ([delegate respondsToSelector:@selector(webSocket:didFailWithError:)]) {
-            [delegate webSocket:self didFailWithError:error];
-        }
-    }];
-}
-
-- (BOOL)parseURLForConnect:(NSError **)error
-{
-    NSURL *url = self.quic_request.URL;
-    if (!url || !url.host.length) {
-        if (error) {
-            *error = [self makeError:SRWebSocketQuicErrorInvalidURL description:@"invalid websocket URL"];
-        }
-        return NO;
-    }
-
-    _host = NSStringToStdString(url.host);
-    NSInteger port = url.port.integerValue;
-    if (port <= 0) {
-        NSString *scheme = url.scheme.lowercaseString;
-        if ([scheme isEqualToString:@"wss"] || [scheme isEqualToString:@"https"]) {
-            port = 443;
-        } else {
-            port = 80;
-        }
-    }
-    _port = std::to_string(port);
-    _params = BuildPathAndQuery(url);
-    return YES;
-}
-
-- (BOOL)sendRawBytes:(const uint8_t *)bytes length:(size_t)length error:(NSError **)error
-{
-    if (!_socket || _streamId == quic::kInvalidStream) {
-        if (error) {
-            *error = [self makeError:SRWebSocketQuicErrorSendFailed description:@"stream is not ready"];
-        }
-        return NO;
-    }
-    const int rc = _socket->send(std::span<const uint8_t>(bytes, length), 0, _streamId);
-    if (rc != quic::Ok) {
-        if (error) {
-            *error = [self makeError:SRWebSocketQuicErrorSendFailed description:@"quic send failed"];
-        }
-        return NO;
-    }
-    return YES;
-}
-
-- (BOOL)sendFramedPayload:(std::span<const uint8_t>)payload error:(NSError **)error
-{
-    auto framed = WrapVarIntPayload(payload);
-    return [self sendRawBytes:framed.data() length:framed.size() error:error];
-}
-
-- (void)handleDataFramesLocked
-{
-    if (!_receivedStatusCode) {
-        uint64_t code = 0;
-        const auto consumed = GetUVarInt(&code, std::span<const uint8_t>(_rxBuffer.data(), _rxBuffer.size()));
-        if (consumed == 0) {
-            return;
-        }
-        _rxBuffer.erase(_rxBuffer.begin(), _rxBuffer.begin() + static_cast<std::ptrdiff_t>(consumed));
-        _receivedStatusCode = true;
-        if (code != 200) {
-            NSError *err = [self makeError:SRWebSocketQuicErrorHandshakeCode
-                               description:[NSString stringWithFormat:@"quic handshake status code: %" PRIu64, code]];
-            [self failWithError:err closeSocket:YES];
-            return;
-        }
-        DBG("onOpen");
-        [self performDelegate:^{
-            [self setQuicReadyState:SR_OPEN];
-            id<SRWebSocketDelegate> delegate = self.delegate;
-            if ([delegate respondsToSelector:@selector(webSocketDidOpen:)]) {
-                [delegate webSocketDidOpen:self];
-            }
-        }];
-    }
-
-    while (!_rxBuffer.empty()) {
-        uint64_t payloadLen = 0;
-        const auto vlen = GetUVarInt(&payloadLen, std::span<const uint8_t>(_rxBuffer.data(), _rxBuffer.size()));
-        if (vlen == 0) {
-            return;
-        }
-        if (_rxBuffer.size() < vlen + payloadLen) {
-            return;
-        }
-        const auto payloadOffset = vlen;
-        NSData *payload = payloadLen == 0
-            ? [NSData data]
-            : [NSData dataWithBytes:_rxBuffer.data() + payloadOffset length:payloadLen];
-
-        std::string textData;
-        if (self.quic_payloadText && payloadLen > 0) {
-            textData.assign(reinterpret_cast<const char *>(_rxBuffer.data() + payloadOffset), payloadLen);
-        }
-        NSString *text = self.quic_payloadText ? StdStringToNSString(textData) : nil;
-
-        [self performDelegate:^{
-            id<SRWebSocketDelegate> delegate = self.delegate;
-            if (!self.quic_payloadText) {
-                if ([delegate respondsToSelector:@selector(webSocket:didReceiveMessageWithData:)]) {
-                    [delegate webSocket:self didReceiveMessageWithData:payload];
-                } else if ([delegate respondsToSelector:@selector(webSocket:didReceiveMessage:)]) {
-                    [delegate webSocket:self didReceiveMessage:payload];
-                }
-                return;
-            }
-
-            BOOL convertToString = YES;
-            if ([delegate respondsToSelector:@selector(webSocketShouldConvertTextFrameToString:)]) {
-                convertToString = [delegate webSocketShouldConvertTextFrameToString:self];
-            }
-            if (convertToString) {
-                if ([delegate respondsToSelector:@selector(webSocket:didReceiveMessageWithString:)]) {
-                    [delegate webSocket:self didReceiveMessageWithString:text];
-                } else if ([delegate respondsToSelector:@selector(webSocket:didReceiveMessage:)]) {
-                    [delegate webSocket:self didReceiveMessage:text];
-                }
-            } else if ([delegate respondsToSelector:@selector(webSocket:didReceiveMessageWithData:)]) {
-                [delegate webSocket:self didReceiveMessageWithData:payload];
-            }
-        }];
-
-        const auto consumed = vlen + payloadLen;
-        _rxBuffer.erase(_rxBuffer.begin(), _rxBuffer.begin() + static_cast<std::ptrdiff_t>(consumed));
-    }
+                               code:httpCode
+                           userInfo:userInfo];
 }
 
 #pragma mark - Open / Close
@@ -510,164 +283,157 @@ std::string QuicSNIHostFromRequest(NSURLRequest *request,
     }
     self.quic_opened = YES;
     [self setQuicReadyState:SR_CONNECTING];
-    _streamId = quic::kInvalidStream;
-    _receivedStatusCode = false;
-    {
-        std::lock_guard<std::mutex> lock(_rxMutex);
-        _rxBuffer.clear();
+
+    if (!_ws) {
+        _ws = std::make_unique<bff::QuicSocket>();
     }
 
-    NSError *parseError = nil;
-    if (![self parseURLForConnect:&parseError]) {
-        [self failWithError:parseError closeSocket:NO];
-        return;
-    }
-
-    _socket->onCertVerify([](void *ssl_ctx) { return AddCertsToSSL(ssl_ctx); });
-    quic::Options opts;
-    opts.verify_peer = !_allowsUntrustedSSLCertificates;
-    opts.sni = QuicSNIHostFromRequest(_quic_request, _quic_securityPolicy, _host);
-    opts.connect_timeout = static_cast<int>(std::max(0.0, self.quic_request.timeoutInterval * 1000.0));
-    DBG("open. sni_host=%s connect_timeout=%d", opts.sni.c_str(), opts.connect_timeout);
-    _socket->options(std::move(opts));
+    NSURL *url = self.quic_request.URL;
+    const std::string urlHost = NSStringToStdString(url.host);
+    const std::string sniHost = QuicSNIHostFromRequest(self.quic_request,
+                                                       self.quic_securityPolicy,
+                                                       urlHost);
 
     __weak typeof(self) weakSelf = self;
-    _socket->onOpen([](const sockaddr *addr, socklen_t len) {
-        char host[NI_MAXHOST] = {};
-        char service[NI_MAXSERV] = {};
-        const int rc = addr ? getnameinfo(addr, len, host, sizeof(host), service,
-                                          sizeof(service), NI_NUMERICHOST | NI_NUMERICSERV)
-                            : EAI_FAIL;
-        DBG("onOpen. addr=%s:%s", rc == 0 ? host : "?", rc == 0 ? service : "?");
-        return true;
-    });
-    _socket->onOpenStream([weakSelf](uint64_t conn_id, int64_t stream_id,
-                                    quic::Dir dir, bool remote) {
-        DBG("onOpenStream. conn_id=%" PRIu64 " stream_id=%" PRId64 " dir=%d remote=%d", conn_id, stream_id, static_cast<int>(dir), remote);
-        // This WebSocket transport uses exactly one client-created stream.
-        // Reject peer-created streams instead of letting one become _streamId.
-        if (remote) {
-            return false;
-        }
-        __strong typeof(weakSelf) strongSelf = weakSelf;
-        if (!strongSelf || strongSelf->_streamId != quic::kInvalidStream) {
-            return true;
-        }
-        strongSelf->_streamId = stream_id;
-
-        NSError *sendError = nil;
-        const uint8_t marker = 0x35;
-        if (![strongSelf sendRawBytes:&marker length:1 error:&sendError]) {
-            [strongSelf failWithError:sendError closeSocket:YES];
-            return false;
-        }
-        const auto paramsBytes = std::span<const uint8_t>(
-            reinterpret_cast<const uint8_t *>(strongSelf->_params.data()),
-            strongSelf->_params.size());
-        if (![strongSelf sendFramedPayload:paramsBytes error:&sendError]) {
-            [strongSelf failWithError:sendError closeSocket:YES];
-            return false;
-        }
-        return true;
-    });
-
-    _socket->onRecv([weakSelf](uint64_t /*conn_id*/, int64_t /*stream_id*/, std::span<const uint8_t> data, bool /*fin*/) {
+    _ws->onCertVerify([](void *ssl_ctx) { return AddCertsToSSL(ssl_ctx); });
+    _ws->setOnOpen([weakSelf]() {
         __strong typeof(weakSelf) strongSelf = weakSelf;
         if (!strongSelf) {
             return;
         }
-        std::lock_guard<std::mutex> lock(strongSelf->_rxMutex);
-        strongSelf->_rxBuffer.insert(strongSelf->_rxBuffer.end(), data.begin(), data.end());
-        [strongSelf handleDataFramesLocked];
-    });
-
-    _socket->onError([weakSelf](uint64_t conn_id, quic::Error error) {
-        DBG("onError. conn_id=%" PRIu64 " kind=%u code=%" PRIu64 " reason=%s", conn_id, static_cast<unsigned>(error.kind), error.code, error.reason.c_str());
-        __strong typeof(weakSelf) strongSelf = weakSelf;
-        if (!strongSelf) {
-            return;
-        }
-        NSString *reason = StdStringToNSString(error.reason);
-        if (!reason.length) {
-            reason = [NSString stringWithFormat:@"quic error kind=%u code=%" PRIu64, (unsigned)error.kind, error.code];
-        }
-        // Mirror SRWebSocketCurl: map TLS/cert failures to
-        // NSURLErrorClientCertificateRejected so JsppWebSocket → JsppRTCErrorSSL.
-        NSString *errDomain = SRWebSocketQuicErrorDomain;
-        NSInteger nsCode = SRWebSocketQuicErrorOpenFailed;
-        NSMutableDictionary *userInfo = [NSMutableDictionary dictionary];
-        userInfo[NSLocalizedDescriptionKey] = reason;
-        if (error.kind == quic::ErrKind::Lib
-            && error.code == static_cast<uint64_t>(ETIMEDOUT)) {
-            errDomain = NSURLErrorDomain;
-            nsCode = NSURLErrorTimedOut;
-        } else if (error.kind == quic::ErrKind::Application) {
-            userInfo[@"HTTPResponseStatusCode"] = @(error.code);
-        } else if (error.kind == quic::ErrKind::Ssl) {
-            nsCode = NSURLErrorClientCertificateRejected;
-        }
-        NSError *err = [NSError errorWithDomain:errDomain
-                                           code:nsCode
-                                       userInfo:userInfo];
-        [strongSelf failWithError:err closeSocket:NO];
-    });
-
-    _socket->onCloseStream([weakSelf](uint64_t conn_id, int64_t stream_id,
-                                      bool remote) {
-        DBG("onCloseStream. conn_id=%" PRIu64 " stream_id=%" PRId64 " remote=%d", conn_id, stream_id, remote);
-    });
-
-    _socket->onClose([weakSelf](uint64_t conn_id, quic::Error error, bool remote) {
-        __strong typeof(weakSelf) strongSelf = weakSelf;
-        if (!strongSelf) {
-            return;
-        }
-        NSString *reason = StdStringToNSString(error.reason);
-        const BOOL normalClose = !remote && error.kind == quic::ErrKind::None;
-        const NSInteger closeCode = normalClose ? SRStatusCodeNormal : kWebSocketAbnormalClose;
-        if (!reason.length && !normalClose) {
-            reason = [NSString stringWithFormat:@"quic error kind=%u code=%" PRIu64,
-                               (unsigned)error.kind, error.code];
-        }
-        DBG("onClose. conn_id=%" PRIu64 " kind=%u code=%" PRIu64 " ws_code=%ld reason=%s remote=%d", conn_id, static_cast<unsigned>(error.kind), error.code, (long)closeCode, reason.UTF8String ?: "", (int)remote);
+        DBG("onOpen");
         [strongSelf performDelegate:^{
-            [strongSelf setQuicReadyState:SR_CLOSED];
+            [strongSelf setQuicReadyState:SR_OPEN];
             id<SRWebSocketDelegate> delegate = strongSelf.delegate;
-            if ([delegate respondsToSelector:@selector(webSocket:didCloseWithCode:reason:wasClean:)]) {
-                [delegate webSocket:strongSelf didCloseWithCode:closeCode reason:reason wasClean:normalClose];
+            if ([delegate respondsToSelector:@selector(webSocketDidOpen:)]) {
+                [delegate webSocketDidOpen:strongSelf];
             }
         }];
     });
 
-    addrinfo hints{};
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = SOCK_DGRAM;
-    addrinfo *res = nullptr;
-    if (getaddrinfo(_host.c_str(), _port.c_str(), &hints, &res) != 0 || !res) {
-        [self failWithError:[self makeError:SRWebSocketQuicErrorResolveHost
-                                 description:[NSString stringWithFormat:@"resolve host failed: %s:%s", _host.c_str(), _port.c_str()]]
-                closeSocket:NO];
-        return;
-    }
-
-    int rc = quic::Err;
-    for (auto *rp = res; rp; rp = rp->ai_next) {
-        rc = _socket->open(rp->ai_addr, rp->ai_addrlen);
-        if (rc == quic::Ok) {
-            break;
+    _ws->setOnRecv([weakSelf](std::string data, bool binary) {
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        if (!strongSelf) {
+            return;
         }
-    }
-    freeaddrinfo(res);
-    if (rc != quic::Ok) {
-        [self failWithError:[self makeError:SRWebSocketQuicErrorOpenFailed description:@"quic open failed"]
-                closeSocket:NO];
-        return;
-    }
 
-    if (_socket->openStream() != quic::Ok) {
-        [self failWithError:[self makeError:SRWebSocketQuicErrorOpenStreamFailed description:@"open quic stream failed"]
-                closeSocket:YES];
-        return;
+        NSData *payload = data.empty()
+            ? [NSData data]
+            : [NSData dataWithBytes:data.data() length:data.size()];
+        NSString *text = binary ? nil : StdStringToNSString(data);
+
+        [strongSelf performDelegate:^{
+            id<SRWebSocketDelegate> delegate = strongSelf.delegate;
+            if (binary) {
+                if ([delegate respondsToSelector:@selector(webSocket:didReceiveMessageWithData:)]) {
+                    [delegate webSocket:strongSelf didReceiveMessageWithData:payload];
+                } else if ([delegate respondsToSelector:@selector(webSocket:didReceiveMessage:)]) {
+                    [delegate webSocket:strongSelf didReceiveMessage:payload];
+                }
+                return;
+            }
+
+            BOOL convertToString = YES;
+            if ([delegate respondsToSelector:@selector(webSocketShouldConvertTextFrameToString:)]) {
+                convertToString = [delegate webSocketShouldConvertTextFrameToString:strongSelf];
+            }
+            if (convertToString) {
+                if ([delegate respondsToSelector:@selector(webSocket:didReceiveMessageWithString:)]) {
+                    [delegate webSocket:strongSelf didReceiveMessageWithString:text];
+                } else if ([delegate respondsToSelector:@selector(webSocket:didReceiveMessage:)]) {
+                    [delegate webSocket:strongSelf didReceiveMessage:text];
+                }
+            } else if ([delegate respondsToSelector:@selector(webSocket:didReceiveMessageWithData:)]) {
+                [delegate webSocket:strongSelf didReceiveMessageWithData:payload];
+            }
+        }];
+    });
+
+    _ws->setOnError([weakSelf](bff::QuicSocket::Error error) {
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        if (!strongSelf) {
+            return;
+        }
+
+        NSString *message = StdStringToNSString(error.detail);
+        if (!message.length) {
+            message = @"QUIC WebSocket error";
+        }
+
+        NSString *errDomain = SRWebSocketQuicErrorDomain;
+        NSInteger nsCode = 0;
+        NSMutableDictionary *userInfo = [NSMutableDictionary dictionary];
+        userInfo[NSLocalizedDescriptionKey] = message;
+
+        switch (error.kind) {
+            case bff::QuicSocket::ErrorKind::Timeout:
+                errDomain = NSURLErrorDomain;
+                nsCode = NSURLErrorTimedOut;
+                break;
+            case bff::QuicSocket::ErrorKind::Ssl:
+                nsCode = NSURLErrorClientCertificateRejected;
+                break;
+            case bff::QuicSocket::ErrorKind::Resolve:
+                nsCode = EHOSTDOWN;
+                break;
+            case bff::QuicSocket::ErrorKind::Http:
+                if (error.httpCode > 0) {
+                    userInfo[@"HTTPResponseStatusCode"] = @(error.httpCode);
+                }
+                nsCode = error.httpCode;
+                break;
+            case bff::QuicSocket::ErrorKind::Connect:
+            case bff::QuicSocket::ErrorKind::InvalidUrl:
+            case bff::QuicSocket::ErrorKind::Other:
+                break;
+        }
+
+        NSError *err = [NSError errorWithDomain:errDomain code:nsCode userInfo:userInfo];
+        DBG("onError. kind=%d code=%ld detail=%s",
+            static_cast<int>(error.kind), (long)nsCode, message.UTF8String ?: "");
+        [strongSelf performDelegate:^{
+            [strongSelf setQuicReadyState:SR_CLOSED];
+            id<SRWebSocketDelegate> delegate = strongSelf.delegate;
+            if ([delegate respondsToSelector:@selector(webSocket:didFailWithError:)]) {
+                [delegate webSocket:strongSelf didFailWithError:err];
+            }
+        }];
+    });
+
+    _ws->setOnClose([weakSelf](int code, std::string reason, bool remote) {
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        if (!strongSelf) {
+            return;
+        }
+
+        NSString *reasonText = reason.empty() ? nil : StdStringToNSString(reason);
+        const NSInteger closeCode = (!remote && code == 0) ? SRStatusCodeNormal : code;
+        const BOOL wasClean = closeCode == SRStatusCodeNormal || closeCode == SRStatusCodeGoingAway;
+        DBG("onClose. code=%ld reason=%s remote=%d",
+            (long)closeCode, reasonText.UTF8String ?: "", (int)remote);
+        [strongSelf performDelegate:^{
+            [strongSelf setQuicReadyState:SR_CLOSED];
+            id<SRWebSocketDelegate> delegate = strongSelf.delegate;
+            if ([delegate respondsToSelector:@selector(webSocket:didCloseWithCode:reason:wasClean:)]) {
+                [delegate webSocket:strongSelf
+                     didCloseWithCode:closeCode
+                               reason:reasonText
+                             wasClean:wasClean];
+            }
+        }];
+    });
+
+    bff::QuicSocket::OpenOptions options;
+    options.url = NSStringToStdString(url.absoluteString);
+    options.sni_host = sniHost;
+
+    _ws->setConnectTimeout(static_cast<int>(std::max(0.0, self.quic_request.timeoutInterval * 1000.0)));
+    if (!_ws->open(options)) {
+        [self setQuicReadyState:SR_CLOSED];
+        id<SRWebSocketDelegate> delegate = self.delegate;
+        if ([delegate respondsToSelector:@selector(webSocket:didFailWithError:)]) {
+            [delegate webSocket:self didFailWithError:[self errorFromQuicSocket]];
+        }
     }
 }
 
@@ -677,21 +443,23 @@ std::string QuicSNIHostFromRequest(NSURLRequest *request,
     [self closeWithCode:SRStatusCodeNormal reason:nil];
 }
 
-- (void)closeWithCode:(NSInteger)code reason:(NSString *)reason
+- (void)closeWithCode:(NSInteger)code reason:(nullable NSString *)reason
 {
     DBG("close. code=%ld, reason=%s", (long)code, reason.UTF8String ?: "");
     if (_quic_readyState == SR_CLOSED || _quic_readyState == SR_CLOSING) {
         return;
     }
     [self setQuicReadyState:SR_CLOSING];
-    if (_socket) {
-        _socket->close();
+    if (_ws) {
+        _ws->closeAsync(static_cast<int>(code), NSStringToStdString(reason));
     }
 }
 
 #pragma mark - Send
 
-- (void)send:(id)message
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-implementations"
+- (void)send:(nullable id)message
 {
     if ([message isKindOfClass:[NSString class]]) {
         NSError *error = nil;
@@ -701,59 +469,68 @@ std::string QuicSNIHostFromRequest(NSURLRequest *request,
         [self sendData:message error:&error];
     }
 }
+#pragma clang diagnostic pop
 
 - (BOOL)sendString:(NSString *)string error:(NSError **)error
 {
     if (!string) {
         if (error) {
-            *error = [self makeError:SRWebSocketQuicErrorSendFailed description:@"message is nil"];
+            *error = [NSError errorWithDomain:SRWebSocketQuicErrorDomain
+                                         code:0
+                                     userInfo:@{NSLocalizedDescriptionKey: @"message is nil"}];
         }
         return NO;
     }
     if (_quic_readyState != SR_OPEN) {
         if (error) {
-            *error = [self makeError:SRWebSocketQuicErrorSendFailed description:@"socket is not connected"];
+            *error = [NSError errorWithDomain:SRWebSocketQuicErrorDomain
+                                         code:0
+                                     userInfo:@{NSLocalizedDescriptionKey: @"socket is not connected"}];
         }
         return NO;
     }
     const std::string payload = NSStringToStdString(string);
-    return [self sendFramedPayload:std::span<const uint8_t>(
-        reinterpret_cast<const uint8_t *>(payload.data()), payload.size()) error:error];
+    return _ws->send(payload.data(), payload.size(), false);
 }
 
-- (BOOL)sendData:(NSData *)data error:(NSError **)error
+- (BOOL)sendData:(nullable NSData *)data error:(NSError **)error
 {
     return [self sendPayload:data error:error];
 }
 
-- (BOOL)sendDataNoCopy:(NSData *)data error:(NSError **)error
+- (BOOL)sendDataNoCopy:(nullable NSData *)data error:(NSError **)error
 {
     return [self sendPayload:data error:error];
 }
 
-- (BOOL)sendPayload:(NSData *)data error:(NSError **)error
+- (BOOL)sendPayload:(nullable NSData *)data error:(NSError **)error
 {
     if (!data) {
         if (error) {
-            *error = [self makeError:SRWebSocketQuicErrorSendFailed description:@"data is nil"];
+            *error = [NSError errorWithDomain:SRWebSocketQuicErrorDomain
+                                         code:0
+                                     userInfo:@{NSLocalizedDescriptionKey: @"data is nil"}];
         }
         return NO;
     }
     if (_quic_readyState != SR_OPEN) {
         if (error) {
-            *error = [self makeError:SRWebSocketQuicErrorSendFailed description:@"socket is not connected"];
+            *error = [NSError errorWithDomain:SRWebSocketQuicErrorDomain
+                                         code:0
+                                     userInfo:@{NSLocalizedDescriptionKey: @"socket is not connected"}];
         }
         return NO;
     }
-    return [self sendFramedPayload:std::span<const uint8_t>(
-        static_cast<const uint8_t *>(data.bytes), data.length) error:error];
+    return _ws->send(data.bytes, data.length, true);
 }
 
 - (BOOL)sendPing:(NSData *)data error:(NSError **)error
 {
     (void)data;
     if (error) {
-        *error = [self makeError:SRWebSocketQuicErrorSendFailed description:@"sendPing is not supported"];
+        *error = [NSError errorWithDomain:SRWebSocketQuicErrorDomain
+                                     code:0
+                                 userInfo:@{NSLocalizedDescriptionKey: @"sendPing is not supported"}];
     }
     return NO;
 }
@@ -762,9 +539,14 @@ std::string QuicSNIHostFromRequest(NSURLRequest *request,
 
 - (void)dealloc
 {
-    if (_socket) {
-        _socket->close();
-        _socket.reset();
+    if (_ws) {
+        _ws->setOnOpen(nullptr);
+        _ws->setOnClose(nullptr);
+        _ws->setOnError(nullptr);
+        _ws->setOnRecv(nullptr);
+        _ws->onCertVerify(nullptr);
+        _ws->close();
+        _ws.reset();
     }
 }
 
