@@ -162,9 +162,22 @@ JSPPRTC_JNI_S(void, StunUtil_nativeSetLogger, jobject obj)
             return;
         }
         auto env = jmi::getEnv();
+        if (!env) {
+            return;
+        }
+        // Native threads keep a pending Java exception until it is cleared.
+        // Logging (or any JNI call) with a pending exception aborts ART.
+        if (env->ExceptionCheck()) {
+            env->ExceptionDescribe();
+            env->ExceptionClear();
+        }
         jmi::LocalRef message = jmi::from_string(msg, env);
         jmi::LocalRef jtag = jmi::from_string(tag, env);
         env->CallVoidMethod(gObj, onLogMethod, message.get<jstring>(), level, jtag.get<jstring>());
+        if (env->ExceptionCheck()) {
+            env->ExceptionDescribe();
+            env->ExceptionClear();
+        }
     });
 }
 } // extern "C"

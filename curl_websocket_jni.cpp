@@ -44,6 +44,13 @@ void cacheMethodIds(JNIEnv *env, NativeWebSocket *native_ws) {
     env->DeleteLocalRef(cls);
 }
 
+void clearJniException(JNIEnv *env) {
+    if (env != nullptr && env->ExceptionCheck()) {
+        env->ExceptionDescribe();
+        env->ExceptionClear();
+    }
+}
+
 void callOnNativeThread(NativeWebSocket *native_ws, const std::function<void(JNIEnv *)> &fn) {
     if (!native_ws || !native_ws->java_client || !native_ws->vm) {
         return;
@@ -54,7 +61,9 @@ void callOnNativeThread(NativeWebSocket *native_ws, const std::function<void(JNI
         native_ws->vm->AttachCurrentThread(&env, nullptr);
     }
     if (env) {
+        clearJniException(env);
         fn(env);
+        clearJniException(env);
     }
     if (attached) {
         native_ws->vm->DetachCurrentThread();
