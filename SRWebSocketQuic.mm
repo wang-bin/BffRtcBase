@@ -231,13 +231,9 @@ allowsUntrustedSSLCertificates:(BOOL)allowsUntrustedSSLCertificates
                              protocols:(nullable NSArray<NSString *> *)protocols
                         securityPolicy:(nullable SRSecurityPolicy *)securityPolicy
 {
-    if (securityPolicy) {
-        self = [super initWithURLRequest:request protocols:protocols securityPolicy:securityPolicy];
-    } else if (protocols) {
-        self = [super initWithURLRequest:request protocols:protocols];
-    } else {
-        self = [super initWithURLRequest:request];
-    }
+    // SocketRocket's other inits are convenience methods that bounce through `self`.
+    // Calling them via super re-enters our overrides and recurses until the stack dies.
+    self = [super initWithURLRequest:request protocols:protocols securityPolicy:securityPolicy];
     if (!self) {
         return nil;
     }
