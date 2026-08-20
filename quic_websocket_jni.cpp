@@ -10,7 +10,7 @@
 
 #include "Cert.h"
 #include "QuicSocket.h"
-#include "QuicWebSocketClient.hpp"
+#include "jmi.QuicWebSocketClient.hpp"
 
 namespace {
 

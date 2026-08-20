@@ -1,5 +1,5 @@
 #if (__ANDROID__ + 0)
-#include "CurlWebSocketClient.hpp"
+#include "jmi.CurlWebSocketClient.hpp"
 #include "JMIUtils.hpp"
 
 namespace jmi {
@@ -11,3 +11,4 @@ JMI_DEFINE(void, CurlWebSocketClient::dispatchError, JMI_ARG3(jint, jint, const 
 
 } // namespace jmi
 #endif // __ANDROID__
+

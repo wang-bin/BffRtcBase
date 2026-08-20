@@ -11,7 +11,7 @@
 
 #include "WebSocket.h"
 #include "Cert.h"
-#include "CurlWebSocketClient.hpp"
+#include "jmi.CurlWebSocketClient.hpp"
 
 namespace {
 

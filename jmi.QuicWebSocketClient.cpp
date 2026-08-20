@@ -1,5 +1,5 @@
 #if (__ANDROID__ + 0)
-#include "QuicWebSocketClient.hpp"
+#include "jmi.QuicWebSocketClient.hpp"
 #include "JMIUtils.hpp"
 
 namespace jmi {
@@ -11,3 +11,4 @@ JMI_DEFINE(void, QuicWebSocketClient::dispatchError, JMI_ARG3(jint, jint, const 
 
 } // namespace jmi
 #endif // __ANDROID__
+

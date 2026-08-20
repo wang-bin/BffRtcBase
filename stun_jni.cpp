@@ -9,7 +9,7 @@
 #include "Log.hpp"
 #include "jmi.h"
 #include "android.util.Pair.hpp"
-#include "FileLogger.hpp"
+#include "jmi.FileLogger.hpp"
 #include "java.lang.Integer.hpp"
 
 using namespace std;
