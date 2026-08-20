@@ -41,6 +41,7 @@ add_library(${PROJECT_NAME} MODULE
     protobuf-c/protobuf-c.c
     Cert.cpp
     DateTime.cpp
+    FileLogger.cpp
     HttpClient.cpp
     laser-ca.der.c
     Log.cpp
@@ -65,6 +66,7 @@ if(ANDROID)
   target_sources(${PROJECT_NAME} PRIVATE
     stun_test.cpp
     stun_jni.cpp
+    file_logger_jni.cpp
     curl_websocket_jni.cpp
     quic_websocket_jni.cpp
     curl_http_jni.cpp
