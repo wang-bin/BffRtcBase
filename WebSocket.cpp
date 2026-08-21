@@ -24,6 +24,17 @@
 
 namespace {
 
+// bff::WebSocket always speaks WebSocket; map http(s) so libcurl takes the
+// UPGR101_WS path (non-101 → CURLE_HTTP_RETURNED_ERROR) instead of plain HTTP.
+std::string normalize_ws_url(std::string url) {
+    if (url.compare(0, 8, "https://") == 0) {
+        url.replace(0, 5, "wss");
+    } else if (url.compare(0, 7, "http://") == 0) {
+        url.replace(0, 4, "ws");
+    }
+    return url;
+}
+
 thread_local int g_in_curl_callback = 0;
 
 struct CurlCallbackGuard {
@@ -187,7 +198,8 @@ public:
 
     void wakeWorker() {
         wake_pipe.signal();
-        // curl_easy_* / curl_multi_* are not re-entrant from write/xfer callbacks.
+        // Keep curl_easy_* calls on the worker thread. curl_multi_wakeup() is
+        // the only libcurl operation needed here and is safe cross-thread.
         if (g_in_curl_callback > 0) {
             return;
         }
@@ -196,9 +208,6 @@ public:
             curl_multi_wakeup(m);
         }
 #endif
-        if (auto *e = easy.load(std::memory_order_acquire)) {
-            curl_easy_pause(e, CURLPAUSE_CONT);
-        }
     }
 
     static bool isWsUpgraded(CURL *e) {
@@ -503,7 +512,7 @@ bool WebSocket::open(const std::string& url) {
 
 bool WebSocket::open(const OpenOptions& options) {
     DBG("open. sni_host=%s", options.sni_host.c_str());
-    d->url = options.url;
+    d->url = normalize_ws_url(options.url);
     d->headers = options.headers;
     d->last_error.clear();
     d->last_error_code = 0;
@@ -694,6 +703,17 @@ bool WebSocket::open(const OpenOptions& options) {
         } else if (!d->close_called && !d->error_reported.load()) {
             if (d->local_close_requested) {
                 d->fireClose(d->local_close_code, d->local_close_reason, false);
+            } else if (!d->open_notified.load(std::memory_order_acquire)) {
+                // Never reached WebSocket open (e.g. transfer ended without 101).
+                // Defensive: do not misreport as Normal close.
+                d->fireError(Error{
+                    .curlCode = http_code > 0
+                        ? static_cast<int>(CURLE_HTTP_RETURNED_ERROR)
+                        : static_cast<int>(CURLE_WEIRD_SERVER_REPLY),
+                    .httpCode = http_code,
+                    .detail = http_code > 0 ? curl_easy_strerror(CURLE_HTTP_RETURNED_ERROR)
+                                            : "WebSocket handshake failed",
+                });
             } else {
                 // Peer closed without a WS CLOSE frame; sync close() reports local close after join.
                 d->fireClose(CloseCode::Normal, {}, true);
