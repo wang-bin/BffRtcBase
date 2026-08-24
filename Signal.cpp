@@ -327,16 +327,20 @@ public:
         bool start_tcp = false;
         {
             std::lock_guard lock(race_mtx);
-            if (!session_open && mixedMode() && allowQuicFallback && leg == Leg::Quic) {
+            if (!session_open && mixedMode() && leg == Leg::Quic) {
                 cancelMixedDelayOnly();
                 if (has_alt) {
+                    // TCP already handshaking: promote even on local/clean Quic
+                    // close so scheduleReconnect → cancelMixedRace cannot kill it.
                     if (leg == primary_leg) {
                         primary_leg = Leg::Curl;
                     }
                     has_alt = false;
                     return true;
                 }
-                start_tcp = true;
+                if (allowQuicFallback) {
+                    start_tcp = true;
+                }
             } else if (!session_open && mixedMode() && isAlt(leg)) {
                 has_alt = false;
                 const auto st = quic.readyState();
@@ -407,6 +411,8 @@ public:
             failFatal(RtcError::Token);
             return;
         }
+        // Local/clean Quic close must not start a *new* TCP fallback, but TCP
+        // already racing is promoted inside handleMixedTransportFailure.
         if (handleMixedTransportFailure(leg, /*allowQuicFallback=*/remote && !user_closed.load())) {
             return;
         }
