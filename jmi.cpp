@@ -1,11 +1,11 @@
 /*
  * JMI: JNI Modern Interface
  * Copyright (C) 2016-2026 Wang Bin - wbsecg1@gmail.com
+ * AI participated
  * https://github.com/wang-bin/JMI
  * MIT License
  */
 #include "jmi.h"
-#ifdef JMI_MAJOR
 #include <cassert>
 #include <iostream>
 #include <mutex>
@@ -37,19 +37,17 @@ namespace jmi {
 
 
 template<size_t N, class C, typename R, typename ...Args>
-constexpr auto param_at(R (C::*f)(Args...args)) noexcept
-{
-    return get<N>(make_tuple(Args{}...));
-}
+constexpr auto param_at(R (C::*)(Args...)) noexcept -> tuple_element_t<N, tuple<Args...>>;
 
 static jint jni_ver = JNI_VERSION_1_4;
 
 JavaVM* javaVM(JavaVM *vm, jint v) {
     static JavaVM *jvm_ = nullptr;
     const auto old = jvm_;
-    if (vm)
+    if (vm) {
         jvm_ = vm;
-    jni_ver = v;
+        jni_ver = v;
+    }
     return old;
 }
 
@@ -64,13 +62,15 @@ static void detach(void* = nullptr)
         clog << "JMI ERROR: DetachCurrentThread " << status << endl;
 };
 
-JNIEnv *getEnv() {
+JNIEnv *getEnv(JNIEnv* env) {
+    if (env)
+        return env;
     assert(javaVM() && "javaVM() is null");
     if (!javaVM()) {
         clog << "JMI ERROR: java vm is null" << endl;
         return nullptr;
     }
-    JNIEnv* env = nullptr;
+    // ART/JVM may already use thread-local state in GetEnv(); an additional JMI TLS cache is not necessarily faster.
     int status = javaVM()->GetEnv((void**)&env, jni_ver);
     if (status == JNI_OK)
         return env;
@@ -121,46 +121,59 @@ JNIEnv *getEnv() {
     return env;
 }
 
-string to_string(jstring s, JNIEnv* env)
+static string to_string_impl(jstring s, JNIEnv* env)
 {
-    if (!s)
+    if (env->ExceptionCheck() || !s)
         return {};
-    if (!env)
-        env = getEnv();
     const char* cs = env->GetStringUTFChars(s, nullptr);
     if (!cs)
         return {};
     string ss(cs);
     env->ReleaseStringUTFChars(s, cs);
-    env->DeleteLocalRef(s);
     return ss;
+}
+
+string to_string(jstring s, JNIEnv* env)
+{
+    if (!(env = getEnv(env)))
+        return {};
+    const auto result = to_string_impl(s, env);
+    env->DeleteLocalRef(s);
+    return result;
+}
+
+string to_string(LocalRef&& s, JNIEnv* env)
+{
+    if (!(env = getEnv(env)))
+        return {};
+    return to_string_impl(s.get<jstring>(), env);
 }
 
 jstring from_string(const string &s, JNIEnv* env)
 {
-    if (!env)
-        env = getEnv();
+    if (!(env = getEnv(env)))
+        return nullptr;
     return env->NewStringUTF(s.data());
 }
 
 namespace android {
 jobject application(JNIEnv* env)
 {
-    if (!env)
-        env = jmi::getEnv();
+    if (!(env = getEnv(env)))
+        return nullptr;
     const LocalRef c_at = {env->FindClass("android/app/ActivityThread"), env};
-    static jmethodID m_cat = env->GetStaticMethodID(c_at, "currentActivityThread", "()Landroid/app/ActivityThread;");
-    static jmethodID m_ga = env->GetMethodID(c_at, "getApplication", "()Landroid/app/Application;");
+    static const jmethodID m_cat = env->GetStaticMethodID(c_at, "currentActivityThread", "()Landroid/app/ActivityThread;");
+    static const jmethodID m_ga = env->GetMethodID(c_at, "getApplication", "()Landroid/app/Application;");
     const LocalRef at = {env->CallStaticObjectMethod(c_at, m_cat), env};
     return env->CallObjectMethod(at, m_ga);
 }
 } // namespace android
 
 namespace detail {
-string handle_exception(string&& msg, JNIEnv* env) noexcept {
-    if (!env)
-        env = getEnv();
-    if (!env->ExceptionCheck())
+// Out-of-line string concat of p0..p4 to reduce binary bloat (see declaration in jmi.h).
+string handle_exception(JNIEnv* env, const char* p0, const char* p1, const char* p2,
+                        const char* p3, const char* p4) noexcept {
+    if (!(env = getEnv(env)) || !env->ExceptionCheck())
         return {};
     auto ex = env->ExceptionOccurred();
     env->ExceptionDescribe(); // stderr
@@ -176,7 +189,12 @@ string handle_exception(string&& msg, JNIEnv* env) noexcept {
             return call<string, MT>();
         }
     };
-    return std::move(msg) + " Exception: " + Throwable(ex).getMessage();
+    string msg;
+    for (auto* p : {p0, p1, p2, p3, p4}) {
+        if (p && *p)
+            msg += p;
+    }
+    return msg + " Exception: " + Throwable(ex).getMessage();
 }
 
 template<>
@@ -221,7 +239,7 @@ void call_method(JNIEnv *env, jobject obj_id, jmethodID methodId, jvalue *args) 
 }
 template<>
 string call_method(JNIEnv *env, jobject obj_id, jmethodID methodId, jvalue *args) {
-    return to_string(static_cast<jstring>(call_method<jobject>(env, obj_id, methodId, args)), env);
+    return to_string(LocalRef{call_method<jobject>(env, obj_id, methodId, args), env}, env);
 }
 
 template<>
@@ -266,7 +284,7 @@ void call_static_method(JNIEnv *env, jclass classId, jmethodID methodId, jvalue 
 }
 template<>
 string call_static_method(JNIEnv *env, jclass classId, jmethodID methodId, jvalue *args) {
-    return to_string(static_cast<jstring>(call_static_method<jobject>(env, classId, methodId, args)), env);
+    return to_string(LocalRef{call_static_method<jobject>(env, classId, methodId, args), env}, env);
 }
 
 // designated initializer jvalue{.b = obj} requires c++20 or gnu
@@ -288,7 +306,8 @@ jvalue to_jvalue(const char* s, JNIEnv* env) {
 
 template<>
 jarray make_jarray(JNIEnv *env, const jobject &element, size_t size) {
-    return env->NewObjectArray((jsize)size, env->GetObjectClass(element), nullptr); // vc: warning C4267: 'argument': conversion from 'size_t' to 'jsize', possible loss of data
+    const LocalRef c(env->GetObjectClass(element), env);
+    return env->NewObjectArray((jsize)size, c, nullptr); // vc: warning C4267: 'argument': conversion from 'size_t' to 'jsize', possible loss of data
 }
 template<>
 jarray make_jarray(JNIEnv *env, const jboolean&, size_t size) {
@@ -339,7 +358,9 @@ void set_jarray(JNIEnv *env, jarray arr, size_t position, size_t n, const jobjec
 }
 template<>
 void set_jarray(JNIEnv *env, jarray arr, size_t position, size_t n, const bool &elm) {
-    if (n == 1 || sizeof(jboolean) == sizeof(bool)) {
+    if constexpr (sizeof(jboolean) == sizeof(bool)) {
+        env->SetBooleanArrayRegion((jbooleanArray)arr, (jsize)position, (jsize)n, (const jboolean*)&elm);
+    } else if (n == 1) {
         env->SetBooleanArrayRegion((jbooleanArray)arr, (jsize)position, (jsize)n, (const jboolean*)&elm);
     } else {
         vector<jboolean> tmp(n);
@@ -475,7 +496,7 @@ jdouble get_field(JNIEnv* env, jobject oid, jfieldID fid) {
 }
 template<>
 string get_field(JNIEnv* env, jobject oid, jfieldID fid) {
-    return to_string((jstring)get_field<jobject>(env, oid, fid), env);
+    return to_string(LocalRef{get_field<jobject>(env, oid, fid), env}, env);
 }
 
 template<>
@@ -559,7 +580,7 @@ jdouble get_static_field(JNIEnv* env, jclass cid, jfieldID fid) {
 }
 template<>
 string get_static_field(JNIEnv* env, jclass cid, jfieldID fid) {
-    return to_string((jstring)get_static_field<jobject>(env, cid, fid), env);
+    return to_string(LocalRef{get_static_field<jobject>(env, cid, fid), env}, env);
 }
 
 template<>
@@ -605,4 +626,3 @@ void set_static_field(JNIEnv* env, jclass cid, jfieldID fid, string&& v) {
 }
 } // namespace detail
 } //namespace jmi
-#endif
