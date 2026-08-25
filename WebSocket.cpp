@@ -26,11 +26,20 @@ namespace {
 
 // bff::WebSocket always speaks WebSocket; map http(s) so libcurl takes the
 // UPGR101_WS path (non-101 → CURLE_HTTP_RETURNED_ERROR) instead of plain HTTP.
+//
+// Signal nodes on :7202 are TLS-only. Plain ws:// with Host:<domain> is WAF-blocked
+// (HTTP 403 非法阻断); plain ws:// with Host:<ip> gets "HTTP request to an HTTPS
+// server". Java-WebSocket "ws://" still works because JsppWebSocket always installs
+// an SSLSocketFactory, so connect() performs TLS even for the ws scheme. Upgrade
+// ws→wss here so libcurl matches that behavior.
 std::string normalize_ws_url(std::string url) {
     if (url.compare(0, 8, "https://") == 0) {
         url.replace(0, 5, "wss");
     } else if (url.compare(0, 7, "http://") == 0) {
         url.replace(0, 4, "ws");
+    }
+    if (url.compare(0, 5, "ws://") == 0) {
+        url.replace(0, 2, "wss");
     }
     return url;
 }
@@ -511,8 +520,8 @@ bool WebSocket::open(const std::string& url) {
 }
 
 bool WebSocket::open(const OpenOptions& options) {
-    DBG("open. sni_host=%s", options.sni_host.c_str());
     d->url = normalize_ws_url(options.url);
+    DBG("open. sni_host=%s url=%s", options.sni_host.c_str(), d->url.c_str());
     d->headers = options.headers;
     d->last_error.clear();
     d->last_error_code = 0;
