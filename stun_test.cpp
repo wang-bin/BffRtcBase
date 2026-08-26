@@ -5,7 +5,9 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <unistd.h>
+#include <algorithm>
 #include <array>
+#include <cctype>
 #include <cstring>
 #include <chrono>
 #include <string>
@@ -277,12 +279,32 @@ static int loss(int rtt1, int rtt2)
     return rtt1*rtt1 + rtt2*rtt2;
 }
 
+static std::string normalizeNodeIp(const std::string& value)
+{
+    auto ip = value;
+    auto colon = ip.rfind(':');
+    if (colon == std::string::npos) {
+        return ip;
+    }
+    if (colon == 0 || colon + 1 >= ip.size()) {
+        return ip;
+    }
+    if (ip.find(':') != colon) { // Keep ipv6/unknown formats unchanged.
+        return ip;
+    }
+    if (!std::all_of(ip.begin() + colon + 1, ip.end(), [](unsigned char ch) { return std::isdigit(ch) != 0; })) {
+        return ip;
+    }
+    return ip.substr(0, colon);
+}
+
 string FindBestNode(const vector<pair<string, int>>& rtts1, vector<pair<string, int>> rtts2)
 {
     map<int, string> lossMap;
-    for (const auto& [ip, rtt] : rtts1) {
+    for (const auto& [ipRaw, rtt] : rtts1) {
+        auto ip = normalizeNodeIp(ipRaw);
         auto it = std::find_if(rtts2.begin(), rtts2.end(), [&ip](const pair<string, int>& p) {
-            return p.first == ip;
+            return normalizeNodeIp(p.first) == ip;
         });
         if (it != rtts2.end()) {
             int l = loss(rtt, it->second);

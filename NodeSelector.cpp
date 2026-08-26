@@ -154,7 +154,7 @@ void NodeSelector::asyncSort(const std::vector<std::string>& nodesWithPort, cons
             save = false;
             // Fake results to ensure we can still join.
             for (const auto& s : servers) {
-                ret.emplace_back(s, 0);
+                ret.emplace_back(hostFromAddr(s), 0);
             }
         }
 
