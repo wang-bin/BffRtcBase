@@ -42,3 +42,10 @@ private:
     class Private;
     std::unique_ptr<Private> d;
 };
+
+namespace bff {
+
+// GET token URL using Config::Shared() hosts/sni. Callback runs on the curl worker thread.
+void generateToken(const std::string& url, HttpClient::CompletionCallback cb);
+
+} // namespace bff

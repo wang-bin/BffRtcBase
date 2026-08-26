@@ -3,6 +3,7 @@
 #include "HttpClient.h"
 #include "Cert.h"
 #include "SniUrl.h"
+#include "defs.h"
 #include "Log.hpp"
 #define TAG "curl.http"
 #if __has_include(<curl/curl.h>)
@@ -317,3 +318,124 @@ void HttpClient::request(const std::string& url, const std::string& method, std:
     }
 }
 #endif // LIBCURL_VERSION_MAJOR
+
+namespace bff {
+namespace {
+
+std::string hostFromHttpUrl(const std::string& url)
+{
+    auto pos = url.find("://");
+    if (pos == std::string::npos) {
+        return {};
+    }
+    pos += 3;
+    if (pos >= url.size()) {
+        return {};
+    }
+    if (url[pos] == '[') {
+        const auto end = url.find(']', pos);
+        if (end == std::string::npos) {
+            return {};
+        }
+        return url.substr(pos + 1, end - pos - 1);
+    }
+    const auto end = url.find_first_of(":/?", pos);
+    if (end == std::string::npos) {
+        return url.substr(pos);
+    }
+    return url.substr(pos, end - pos);
+}
+
+uint16_t portFromHttpUrl(const std::string& url)
+{
+    auto pos = url.find("://");
+    if (pos == std::string::npos) {
+        return 0;
+    }
+    const std::string scheme = url.substr(0, pos);
+    pos += 3;
+    std::string::size_type hostEnd = pos;
+    if (pos < url.size() && url[pos] == '[') {
+        hostEnd = url.find(']', pos);
+        if (hostEnd == std::string::npos) {
+            return 0;
+        }
+        ++hostEnd;
+    } else {
+        hostEnd = url.find_first_of(":/?", pos);
+        if (hostEnd == std::string::npos) {
+            hostEnd = url.size();
+        }
+    }
+    uint16_t port = 0;
+    if (hostEnd < url.size() && url[hostEnd] == ':') {
+        const auto portEnd = url.find_first_of("/?", hostEnd + 1);
+        const auto portStr = url.substr(hostEnd + 1,
+                                        (portEnd == std::string::npos ? url.size() : portEnd) - (hostEnd + 1));
+        unsigned long p = 0;
+        bool ok = !portStr.empty();
+        for (char c : portStr) {
+            if (c < '0' || c > '9') {
+                ok = false;
+                break;
+            }
+            p = p * 10 + static_cast<unsigned long>(c - '0');
+            if (p > 65535) {
+                ok = false;
+                break;
+            }
+        }
+        if (ok && p > 0) {
+            port = static_cast<uint16_t>(p);
+        }
+    }
+    if (port != 0) {
+        return port;
+    }
+    if (scheme == "https" || scheme == "wss") {
+        return 443;
+    }
+    if (scheme == "http" || scheme == "ws") {
+        return 80;
+    }
+    return 0;
+}
+
+// Match ObjC/Java HTTP: Config.sni + hosts map, fallback to first value.
+std::string resolveSniHost(const std::string& url)
+{
+    const auto& cfg = Config::Shared();
+    if (!cfg.sni || cfg.hosts.empty()) {
+        return {};
+    }
+    const auto host = hostFromHttpUrl(url);
+    if (host.empty()) {
+        return {};
+    }
+    if (const auto it = cfg.hosts.find(host); it != cfg.hosts.end()) {
+        return it->second;
+    }
+    const auto port = portFromHttpUrl(url);
+    if (port != 0) {
+        const auto hostWithPort = host + ":" + std::to_string(port);
+        if (const auto it = cfg.hosts.find(hostWithPort); it != cfg.hosts.end()) {
+            return it->second;
+        }
+    }
+    WARN("no host for %s, use the first", host.c_str());
+    return cfg.hosts.begin()->second;
+}
+
+} // namespace
+
+void generateToken(const std::string& url, HttpClient::CompletionCallback cb)
+{
+    INFO("generateToken %s", url.c_str());
+    HttpClient client;
+    if (const auto sni = resolveSniHost(url); !sni.empty()) {
+        client.sni(sni);
+    }
+    client.get(url, std::move(cb));
+}
+
+} // namespace bff

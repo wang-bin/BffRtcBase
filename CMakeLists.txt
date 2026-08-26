@@ -67,6 +67,7 @@ if(ANDROID)
     stun_test.cpp
     stun_jni.cpp
     file_logger_jni.cpp
+    config_jni.cpp
     curl_websocket_jni.cpp
     quic_websocket_jni.cpp
     curl_http_jni.cpp

@@ -110,6 +110,37 @@ CURLHTTP_JNI(jboolean, nativeIsSecError, jint curlCode) {
     return result.isSecError() ? JNI_TRUE : JNI_FALSE;
 }
 
+// Returns response body on HTTP 200; nullptr otherwise (matches HttpHelper.generateToken).
+CURLHTTP_JNI(jstring, nativeGenerateToken, jstring url) {
+    const std::string url_text = jmi::to_string(url, env);
+    HttpClient::Result result;
+    std::mutex mtx;
+    std::condition_variable cv;
+    bool done = false;
+
+    bff::generateToken(url_text, [&](const HttpClient::Result& r) {
+        result = r;
+        std::lock_guard<std::mutex> lock(mtx);
+        done = true;
+        cv.notify_one();
+    });
+
+    {
+        std::unique_lock<std::mutex> lock(mtx);
+        cv.wait(lock, [&] { return done; });
+    }
+
+    if (result.httpCode != 200 || result.responseBody.empty()) {
+        if (!result.error.empty()) {
+            __android_log_print(ANDROID_LOG_WARN, kTag, "generateToken failed: code=%d error=%s", result.httpCode, result.error.c_str());
+        } else {
+            __android_log_print(ANDROID_LOG_WARN, kTag, "generateToken failed: code=%d", result.httpCode);
+        }
+        return nullptr;
+    }
+    return jmi::from_string(result.responseBody, env);
+}
+
 } // extern "C"
 
 #endif // __ANDROID__
