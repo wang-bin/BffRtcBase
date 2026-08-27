@@ -141,6 +141,39 @@ CURLHTTP_JNI(jstring, nativeGenerateToken, jstring url) {
     return jmi::from_string(result.responseBody, env);
 }
 
+// Blocking POST via bff::uploadLog; returns CurlHttpClient.Result.
+CURLHTTP_JNI(jobject, nativeUploadLog, jstring url, jbyteArray payload, jstring logPathOrName) {
+    const std::string url_text = jmi::to_string(url, env);
+    const std::string path_text = jmi::to_string(logPathOrName, env);
+    std::string body;
+    if (payload) {
+        const jsize n = env->GetArrayLength(payload);
+        if (n > 0) {
+            body.resize(static_cast<size_t>(n));
+            env->GetByteArrayRegion(payload, 0, n, reinterpret_cast<jbyte*>(body.data()));
+        }
+    }
+
+    HttpClient::Result result;
+    std::mutex mtx;
+    std::condition_variable cv;
+    bool done = false;
+
+    bff::uploadLog(url_text, std::move(body), path_text, [&](const HttpClient::Result& r) {
+        result = r;
+        std::lock_guard<std::mutex> lock(mtx);
+        done = true;
+        cv.notify_one();
+    });
+
+    {
+        std::unique_lock<std::mutex> lock(mtx);
+        cv.wait(lock, [&] { return done; });
+    }
+
+    return makeResult(env, result);
+}
+
 } // extern "C"
 
 #endif // __ANDROID__

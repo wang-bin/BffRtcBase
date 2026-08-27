@@ -48,4 +48,12 @@ namespace bff {
 // GET token URL using Config::Shared() hosts/sni. Callback runs on the curl worker thread.
 void generateToken(const std::string& url, HttpClient::CompletionCallback cb);
 
+// POST one log file. `logPathOrName` is a path or basename (`id-yyyyMMddHHmmssZ.log`);
+// room/upload-server come from FileLogger meta; gzip is internal (falls back uncompressed).
+// Callback runs on the curl worker thread. Caller decides when to FileLogger::remove.
+void uploadLog(const std::string& uploadUrl,
+               std::string payload,
+               const std::string& logPathOrName,
+               HttpClient::CompletionCallback cb);
+
 } // namespace bff

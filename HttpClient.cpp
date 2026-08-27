@@ -2,6 +2,7 @@
 
 #include "HttpClient.h"
 #include "Cert.h"
+#include "FileLogger.hpp"
 #include "SniUrl.h"
 #include "defs.h"
 #include "Log.hpp"
@@ -436,6 +437,169 @@ void generateToken(const std::string& url, HttpClient::CompletionCallback cb)
         client.sni(sni);
     }
     client.get(url, std::move(cb));
+}
+
+std::string basenameFromPath(const std::string& path)
+{
+    const auto slash = path.find_last_of('/');
+    if (slash == std::string::npos) {
+        return path;
+    }
+    return path.substr(slash + 1);
+}
+
+// Strip scheme/port like Android HttpHelper.getHost(String).
+std::string hostOnly(std::string s)
+{
+    const auto scheme = s.find("://");
+    if (scheme != std::string::npos) {
+        s = s.substr(scheme + 3);
+    } else {
+        const auto firstColon = s.find(':');
+        const auto lastColon = s.rfind(':');
+        if (firstColon != std::string::npos && lastColon != std::string::npos && lastColon > firstColon) {
+            s = s.substr(firstColon + 1);
+        }
+    }
+    if (const auto colon = s.rfind(':'); colon != std::string::npos) {
+        s = s.substr(0, colon);
+    }
+    return s;
+}
+
+std::string replaceUrlHost(const std::string& url, const std::string& newHost)
+{
+    const auto schemePos = url.find("://");
+    if (schemePos == std::string::npos || newHost.empty()) {
+        return url;
+    }
+    const auto hostStart = schemePos + 3;
+    if (hostStart >= url.size()) {
+        return url;
+    }
+    std::string::size_type hostEnd = hostStart;
+    if (url[hostStart] == '[') {
+        hostEnd = url.find(']', hostStart);
+        if (hostEnd == std::string::npos) {
+            return url;
+        }
+        ++hostEnd;
+    } else {
+        hostEnd = url.find_first_of(":/?", hostStart);
+        if (hostEnd == std::string::npos) {
+            hostEnd = url.size();
+        }
+    }
+    return url.substr(0, hostStart) + newHost + url.substr(hostEnd);
+}
+
+std::string urlEncodeQueryComponent(const std::string& value)
+{
+    static constexpr char hex[] = "0123456789ABCDEF";
+    std::string out;
+    out.reserve(value.size() * 3);
+    for (unsigned char c : value) {
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
+            || c == '-' || c == '_' || c == '.' || c == '~') {
+            out.push_back(static_cast<char>(c));
+        } else {
+            out.push_back('%');
+            out.push_back(hex[c >> 4]);
+            out.push_back(hex[c & 0xF]);
+        }
+    }
+    return out;
+}
+
+// Match iOS/Android: id-yyyyMMddHHmmss±zzzz.log → yyyyMMdd/room/id.log when room is set.
+std::string uploadLogName(const std::string& basename, const std::string& room)
+{
+    if (room.empty()) {
+        return basename;
+    }
+    const auto tz = basename.find_last_of("+-");
+    if (tz == std::string::npos || tz <= 14) {
+        return basename;
+    }
+    const auto yyyyMMdd = basename.substr(tz - 14, 8);
+    const auto dash = basename.find('-');
+    if (dash == std::string::npos || dash == 0) {
+        return basename;
+    }
+    return yyyyMMdd + "/" + room + "/" + basename.substr(0, dash) + ".log";
+}
+
+std::string appendNameQuery(const std::string& url, const std::string& encodedName)
+{
+    if (url.find('?') == std::string::npos) {
+        return url + "?name=" + encodedName;
+    }
+    return url + "&name=" + encodedName;
+}
+
+void uploadLog(const std::string& uploadUrl,
+               std::string payload,
+               const std::string& logPathOrName,
+               HttpClient::CompletionCallback cb)
+{
+    auto name = basenameFromPath(logPathOrName);
+    INFO("uploadLog name=%s url=%s size=%zu", name.c_str(), uploadUrl.c_str(), payload.size());
+
+    const auto& logger = FileLogger::shared();
+    const auto room = logger.getRoom(name);
+    const auto uploadServer = logger.getUploadServer(name);
+    name = uploadLogName(name, room);
+    const auto encodedName = urlEncodeQueryComponent(name);
+
+    std::string url = uploadUrl;
+    if (!uploadServer.empty()) {
+        url = replaceUrlHost(url, hostOnly(uploadServer));
+    }
+    url = appendNameQuery(url, encodedName);
+
+    HttpClient client;
+    client.header("Content-Type", "application/json");
+    client.header("Accept", "application/json, text/plain, */*");
+    if (const auto sni = resolveSniHost(url); !sni.empty()) {
+        client.sni(sni);
+    }
+
+#ifdef LIBCURL_VERSION_MAJOR
+    auto compressed = gzip(payload);
+#else
+    std::string compressed;
+#endif
+    const auto payloadSize = payload.size();
+    auto onComplete = [cb = std::move(cb), payloadSize, name = encodedName](const HttpClient::Result& r) {
+        if (r.curlCode && !r.error.empty()) {
+            WARN("uploadLog error after sending %d/%zu bytes, code=%d name=%s: %s", r.bytesSent, payloadSize,
+                 r.httpCode, name.c_str(), r.error.c_str());
+        } else if (r.httpCode != 200) {
+            WARN("uploadLog failed after sending %d/%zu bytes, response code: %d name=%s", r.bytesSent,
+                 payloadSize, r.httpCode, name.c_str());
+        } else {
+            INFO("uploadLog done, sent %d/%zu bytes, response: %s name=%s", r.bytesSent, payloadSize,
+                 r.responseBody.c_str(), name.c_str());
+            if (r.responseBody.find("\"error\"") != std::string::npos) {
+                WARN("uploadLog response contains error name=%s", name.c_str());
+            }
+        }
+        if (cb) {
+            cb(r);
+        }
+    };
+
+    if (!compressed.empty()) {
+        INFO("uploadLog gzip %zu => %zu name=%s", payloadSize, compressed.size(), encodedName.c_str());
+        client.header("Content-Encoding", "gzip");
+        client.post(url, std::move(compressed), std::move(onComplete));
+    } else {
+        if (!payload.empty()) {
+            WARN("uploadLog gzip failed, fallback uncompressed size=%zu name=%s", payloadSize,
+                 encodedName.c_str());
+        }
+        client.post(url, std::move(payload), std::move(onComplete));
+    }
 }
 
 } // namespace bff
