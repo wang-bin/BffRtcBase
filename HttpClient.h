@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <functional>
 #include <memory>
 #include <string>
@@ -45,6 +46,13 @@ private:
 
 namespace bff {
 
+struct UploadAllLogsResult {
+    size_t total = 0;
+    size_t succeeded = 0;
+    size_t removed = 0;
+    bool secError = false;
+};
+
 // GET token URL using Config::Shared() hosts/sni. Callback runs on the curl worker thread.
 void generateToken(const std::string& url, HttpClient::CompletionCallback cb);
 
@@ -55,5 +63,10 @@ void uploadLog(const std::string& uploadUrl,
                std::string payload,
                const std::string& logPathOrName,
                HttpClient::CompletionCallback cb);
+
+// Flush FileLogger, upload every retained .log, remove on HTTP 200 without JSON error.
+// Callback runs on the curl worker thread when all uploads finish (or immediately if none).
+void uploadAllLogs(const std::string& uploadUrl,
+                   std::function<void(const UploadAllLogsResult&)> cb = {});
 
 } // namespace bff

@@ -10,6 +10,8 @@
 #if __has_include(<curl/curl.h>)
 #include "restincurl.h"
 #endif
+#include <fstream>
+#include <filesystem>
 #include <mutex>
 #include <vector>
 #include <zlib.h>
@@ -537,6 +539,32 @@ std::string appendNameQuery(const std::string& url, const std::string& encodedNa
     return url + "&name=" + encodedName;
 }
 
+std::string readFileBytes(const std::string& path)
+{
+    std::ifstream ifs(path, std::ios::binary);
+    if (!ifs.is_open()) {
+        return {};
+    }
+    return std::string((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+}
+
+bool uploadLogSucceeded(const HttpClient::Result& r)
+{
+    if (r.curlCode && !r.error.empty()) {
+        return false;
+    }
+    if (r.isSecError()) {
+        return false;
+    }
+    if (r.httpCode != 200) {
+        return false;
+    }
+    if (r.responseBody.find("\"error\"") != std::string::npos) {
+        return false;
+    }
+    return true;
+}
+
 void uploadLog(const std::string& uploadUrl,
                std::string payload,
                const std::string& logPathOrName,
@@ -599,6 +627,73 @@ void uploadLog(const std::string& uploadUrl,
                  encodedName.c_str());
         }
         client.post(url, std::move(payload), std::move(onComplete));
+    }
+}
+
+void uploadAllLogs(const std::string& uploadUrl, std::function<void(const UploadAllLogsResult&)> cb)
+{
+    auto& logger = FileLogger::shared();
+    logger.stop();
+    const auto paths = logger.files();
+
+    UploadAllLogsResult summary;
+    summary.total = paths.size();
+    if (paths.empty()) {
+        if (cb) {
+            cb(summary);
+        }
+        return;
+    }
+
+    struct State {
+        UploadAllLogsResult summary;
+        std::function<void(const UploadAllLogsResult&)> cb;
+        std::mutex mtx;
+        size_t pending = 0;
+    };
+    auto state = std::make_shared<State>();
+    state->summary.total = paths.size();
+    state->cb = std::move(cb);
+    state->pending = paths.size();
+
+    auto finishOne = [state](const HttpClient::Result& r, const std::string& path) {
+        bool done = false;
+        UploadAllLogsResult result;
+        {
+            const std::lock_guard<std::mutex> lock(state->mtx);
+            if (r.isSecError()) {
+                state->summary.secError = true;
+            }
+            if (uploadLogSucceeded(r)) {
+                ++state->summary.succeeded;
+                FileLogger::shared().remove(path);
+                ++state->summary.removed;
+            }
+            if (state->pending > 0 && --state->pending == 0) {
+                done = true;
+                result = state->summary;
+            }
+        }
+        if (done && state->cb) {
+            state->cb(result);
+        }
+    };
+
+    for (const auto& path : paths) {
+        auto payload = readFileBytes(path);
+        if (payload.empty()) {
+            std::error_code ec;
+            const auto size = std::filesystem::file_size(path, ec);
+            if (!ec && size > 0) {
+                WARN("uploadAllLogs read failed path=%s", path.c_str());
+                HttpClient::Result failed;
+                finishOne(failed, path);
+                continue;
+            }
+        }
+        uploadLog(uploadUrl, std::move(payload), path, [finishOne, path](const HttpClient::Result& r) {
+            finishOne(r, path);
+        });
     }
 }
 

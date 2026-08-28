@@ -38,6 +38,17 @@ jobject makeResult(JNIEnv *env, const HttpClient::Result &result) {
     return ret;
 }
 
+jobject makeUploadAllLogsResult(JNIEnv *env, const bff::UploadAllLogsResult &result) {
+    jclass cls = env->FindClass("com/jspp/avrtcsdk/impl/CurlHttpClient$UploadAllLogsResult");
+    jmethodID ctor = env->GetMethodID(cls, "<init>", "(IIIZ)V");
+    jobject ret = env->NewObject(cls, ctor, static_cast<jint>(result.total),
+                                 static_cast<jint>(result.succeeded),
+                                 static_cast<jint>(result.removed),
+                                 result.secError ? JNI_TRUE : JNI_FALSE);
+    env->DeleteLocalRef(cls);
+    return ret;
+}
+
 } // namespace
 
 extern "C" {
@@ -141,26 +152,16 @@ CURLHTTP_JNI(jstring, nativeGenerateToken, jstring url) {
     return jmi::from_string(result.responseBody, env);
 }
 
-// Blocking POST via bff::uploadLog; returns CurlHttpClient.Result.
-CURLHTTP_JNI(jobject, nativeUploadLog, jstring url, jbyteArray payload, jstring logPathOrName) {
+// Blocking upload of all retained log files via bff::uploadAllLogs.
+CURLHTTP_JNI(jobject, nativeUploadAllLogs, jstring url) {
     const std::string url_text = jmi::to_string(url, env);
-    const std::string path_text = jmi::to_string(logPathOrName, env);
-    std::string body;
-    if (payload) {
-        const jsize n = env->GetArrayLength(payload);
-        if (n > 0) {
-            body.resize(static_cast<size_t>(n));
-            env->GetByteArrayRegion(payload, 0, n, reinterpret_cast<jbyte*>(body.data()));
-        }
-    }
-
-    HttpClient::Result result;
+    bff::UploadAllLogsResult summary;
     std::mutex mtx;
     std::condition_variable cv;
     bool done = false;
 
-    bff::uploadLog(url_text, std::move(body), path_text, [&](const HttpClient::Result& r) {
-        result = r;
+    bff::uploadAllLogs(url_text, [&](const bff::UploadAllLogsResult& r) {
+        summary = r;
         std::lock_guard<std::mutex> lock(mtx);
         done = true;
         cv.notify_one();
@@ -171,7 +172,7 @@ CURLHTTP_JNI(jobject, nativeUploadLog, jstring url, jbyteArray payload, jstring 
         cv.wait(lock, [&] { return done; });
     }
 
-    return makeResult(env, result);
+    return makeUploadAllLogsResult(env, summary);
 }
 
 } // extern "C"
