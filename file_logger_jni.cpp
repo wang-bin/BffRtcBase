@@ -53,37 +53,14 @@ JSPPRTC_JNI(void, FileLogger_nativeStop)
     bff::FileLogger::shared().stop();
 }
 
-JSPPRTC_JNI(jboolean, FileLogger_nativeWrite, jstring text)
-{
-    return bff::FileLogger::shared().write(jmi::to_string(text, env)) ? JNI_TRUE : JNI_FALSE;
-}
-
 JSPPRTC_JNI(void, FileLogger_nativeSetUploadServer, jstring server)
 {
     bff::FileLogger::shared().setUploadServer(jmi::to_string(server, env));
 }
 
-JSPPRTC_JNI(jstring, FileLogger_nativeGetUploadServer, jstring name)
-{
-    const auto v = bff::FileLogger::shared().getUploadServer(jmi::to_string(name, env));
-    if (v.empty()) {
-        return nullptr;
-    }
-    return jmi::from_string(v, env);
-}
-
 JSPPRTC_JNI(void, FileLogger_nativeSetRoom, jstring room)
 {
     bff::FileLogger::shared().setRoom(jmi::to_string(room, env));
-}
-
-JSPPRTC_JNI(jstring, FileLogger_nativeGetRoom, jstring name)
-{
-    const auto v = bff::FileLogger::shared().getRoom(jmi::to_string(name, env));
-    if (v.empty()) {
-        return nullptr;
-    }
-    return jmi::from_string(v, env);
 }
 
 JSPPRTC_JNI(jobjectArray, FileLogger_nativeFiles)
@@ -95,15 +72,6 @@ JSPPRTC_JNI(jobjectArray, FileLogger_nativeFiles)
 JSPPRTC_JNI(void, FileLogger_nativeRemove, jstring path)
 {
     bff::FileLogger::shared().remove(jmi::to_string(path, env));
-}
-
-JSPPRTC_JNI(jstring, FileLogger_nativeCurrentLogName)
-{
-    const auto name = bff::FileLogger::shared().currentLogName();
-    if (name.empty()) {
-        return nullptr;
-    }
-    return jmi::from_string(name, env);
 }
 
 } // extern "C"

@@ -23,4 +23,3 @@ public:
 
 } // namespace jmi
 #endif // __ANDROID__
-
