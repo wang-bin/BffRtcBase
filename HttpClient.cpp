@@ -13,6 +13,7 @@
 #include <fstream>
 #include <filesystem>
 #include <mutex>
+#include <unordered_set>
 #include <vector>
 #include <zlib.h>
 
@@ -632,13 +633,27 @@ void uploadLog(const std::string& uploadUrl,
 
 void uploadAllLogs(const std::string& uploadUrl, std::function<void(const UploadAllLogsResult&)> cb)
 {
+    static std::mutex uploadAllLogsMtx;
+    static std::unordered_set<std::string> uploadingPaths;
+
     auto& logger = FileLogger::shared();
     logger.stop();
     const auto paths = logger.files();
 
     UploadAllLogsResult summary;
-    summary.total = paths.size();
-    if (paths.empty()) {
+    std::vector<std::string> toUpload;
+    {
+        const std::lock_guard<std::mutex> lock(uploadAllLogsMtx);
+        for (const auto& path : paths) {
+            if (uploadingPaths.insert(path).second) {
+                toUpload.push_back(path);
+            } else {
+                WARN("uploadAllLogs skip in-flight path=%s", path.c_str());
+            }
+        }
+    }
+    summary.total = toUpload.size();
+    if (toUpload.empty()) {
         if (cb) {
             cb(summary);
         }
@@ -652,9 +667,9 @@ void uploadAllLogs(const std::string& uploadUrl, std::function<void(const Upload
         size_t pending = 0;
     };
     auto state = std::make_shared<State>();
-    state->summary.total = paths.size();
+    state->summary.total = toUpload.size();
     state->cb = std::move(cb);
-    state->pending = paths.size();
+    state->pending = toUpload.size();
 
     auto finishOne = [state](const HttpClient::Result& r, const std::string& path) {
         bool done = false;
@@ -674,12 +689,16 @@ void uploadAllLogs(const std::string& uploadUrl, std::function<void(const Upload
                 result = state->summary;
             }
         }
+        {
+            const std::lock_guard<std::mutex> lock(uploadAllLogsMtx);
+            uploadingPaths.erase(path);
+        }
         if (done && state->cb) {
             state->cb(result);
         }
     };
 
-    for (const auto& path : paths) {
+    for (const auto& path : toUpload) {
         auto payload = readFileBytes(path);
         if (payload.empty()) {
             std::error_code ec;
