@@ -670,6 +670,13 @@ public:
         }
     }
 
+    // Ping/transport reconnect must re-join: join_all_requested is only cleared on
+    // connectBestUrl, not on scheduleReconnect -> beginConnect.
+    void resetJoinStateForReconnect() {
+        join_all_requested.store(false);
+        join_requested = false;
+    }
+
     // Notify listeners, then beginConnect after delayMs on a worker thread (never join
     // transports from a curl/quic callback).
     void scheduleReconnect(int delayMs) {
@@ -694,6 +701,7 @@ public:
         }
         const int n = reconnect_count.fetch_add(1, memory_order::relaxed) + 1;
         LOGI("reconnect %d/%d", n, maxTimes);
+        resetJoinStateForReconnect();
         if (owner) {
             owner->enumerateListeners([](int, SignalListener* listener) {
                 listener->onReconnect();
