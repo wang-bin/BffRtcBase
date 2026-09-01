@@ -94,7 +94,7 @@ private:
     bool sendRequest(Rtc__SignalRequest& req, bool important = false);
     bool requestOrAgain(Rtc__SignalRequest& req);
     void sendJoin(int channel);
-    void sendLeave();
+    uint32_t sendLeave();
     void flushPendingReqs();
     void sendPing();
     void sendCachedNodeRttsIfNeededForChannel(int channel);

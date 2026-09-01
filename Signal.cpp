@@ -533,6 +533,45 @@ public:
         has_alt = false;
     }
 
+    void cancelDisconnectCloseWait() {
+        disconnect_closing = false;
+        disconnect_leave_req_id = 0;
+        disconnect_close_gen.fetch_add(1, memory_order::relaxed);
+    }
+
+    void closeSocketAfterDisconnect() {
+        if (!disconnect_closing) {
+            return;
+        }
+        cancelDisconnectCloseWait();
+        closeAllTransports(/*join=*/true);
+    }
+
+    void scheduleDisconnectCloseTimeout() {
+        const int timeout = Config::Shared().signal.pingTimeout;
+        const uint64_t gen = disconnect_close_gen.fetch_add(1, memory_order::relaxed) + 1;
+        weak_ptr weak = shared_from_this();
+        thread([weak, gen, timeout] {
+            if (timeout > 0) {
+                this_thread::sleep_for(timeout * 1ms);
+            }
+            auto self = weak.lock();
+            if (!self || self->disconnect_close_gen.load(memory_order::relaxed) != gen ||
+                !self->disconnect_closing) {
+                return;
+            }
+            LOGW("disconnect close timeout, leave req %u", self->disconnect_leave_req_id);
+            self->closeSocketAfterDisconnect();
+        }).detach();
+    }
+
+    void maybeCloseAfterDisconnectResponse(uint32_t reqId) {
+        if (disconnect_closing && disconnect_leave_req_id != 0 &&
+            disconnect_leave_req_id == reqId) {
+            closeSocketAfterDisconnect();
+        }
+    }
+
     bool sendOnPrimary(const std::string& payload, bool binary) {
         std::lock_guard lock(race_mtx);
         if (primary_leg == Leg::Quic) {
@@ -789,6 +828,9 @@ public:
     bool recreating = false;
     bool subscribing = false;
     std::atomic<bool> join_all_requested{false};
+    bool disconnect_closing = false;
+    uint32_t disconnect_leave_req_id = 0;
+    atomic<uint64_t> disconnect_close_gen{0};
 
     // Stack-backed Options for join/recreate; pointers are valid until sendRequest returns.
     struct ReqOptions {
@@ -862,8 +904,14 @@ void Signal::disconnect() {
     d->reconnect_gen.fetch_add(1, memory_order::relaxed);
     d->stopKeepalive();
     d->state_string = "closing";
-    sendLeave();
-    d->closeAllTransports(/*join=*/true);
+    d->disconnect_closing = true;
+    const uint32_t leaveReqId = sendLeave();
+    if (leaveReqId != 0) {
+        d->disconnect_leave_req_id = leaveReqId;
+        d->scheduleDisconnectCloseTimeout();
+    } else {
+        d->closeSocketAfterDisconnect();
+    }
     lock_guard lock(d->pending_mtx);
     d->pending_reqs.clear();
 }
@@ -1387,14 +1435,22 @@ void Signal::handleReceiveSignalResponse(const Rtc__SignalResponse* signalRespon
                 if (d->last_code != 200) {
                     // Match ObjC: notify only this channel's listener (not fan-out).
                     if (d->last_code == 602 || d->last_code == 603) {
-                        d->closeAllTransports(/*join=*/false);
+                        if (d->disconnect_closing) {
+                            d->closeSocketAfterDisconnect();
+                        } else {
+                            d->closeAllTransports(/*join=*/false);
+                        }
                         if (listener) {
                             listener->onError(RtcError::Token);
                         }
                         return;
                     }
                     if (d->important_reqs.erase(signalResponse->id) > 0) {
-                        d->closeAllTransports(/*join=*/false);
+                        if (d->disconnect_closing) {
+                            d->closeSocketAfterDisconnect();
+                        } else {
+                            d->closeAllTransports(/*join=*/false);
+                        }
                         if (listener) {
                             listener->onError(RtcError::SignalFailed);
                         }
@@ -1419,6 +1475,7 @@ void Signal::handleReceiveSignalResponse(const Rtc__SignalResponse* signalRespon
     }
 
     d->important_reqs.erase(signalResponse->id);
+    d->maybeCloseAfterDisconnectResponse(signalResponse->id);
     if (resetReconn) {
         d->reconnect_count.store(0);
     }
@@ -1531,13 +1588,16 @@ bool Signal::requestOrAgain(Rtc__SignalRequest& req) {
     return false;
 }
 
-void Signal::sendLeave() {
+uint32_t Signal::sendLeave() {
     Rtc__Leave leave = RTC__LEAVE__INIT;
     Rtc__SignalRequest req = RTC__SIGNAL_REQUEST__INIT;
     req.channel = 0;
     req.message_case = RTC__SIGNAL_REQUEST__MESSAGE_LEAVE;
     req.leave = &leave;
-    sendRequest(req);
+    if (sendRequest(req)) {
+        return req.id;
+    }
+    return 0;
 }
 
 void Signal::flushPendingReqs() {
