@@ -699,7 +699,8 @@ public:
 
     void failFatal(RtcError err) {
         stopKeepalive();
-        cancelMixedRace(false);
+        suppress_reconnect.store(true, memory_order::relaxed);
+        closeAllTransports(/*join=*/false);
         {
             std::lock_guard lock(race_mtx);
             session_open = false;
@@ -747,7 +748,9 @@ public:
             });
         }
         stopKeepalive();
-        cancelMixedRace(false);
+        suppress_reconnect.store(true, memory_order::relaxed);
+        closeAllTransports(/*join=*/false);
+        suppress_reconnect.store(false, memory_order::relaxed);
         {
             std::lock_guard lock(race_mtx);
             session_open = false;
