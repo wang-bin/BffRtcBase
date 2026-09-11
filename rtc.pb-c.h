@@ -17,6 +17,8 @@ PROTOBUF_C__BEGIN_DECLS
 
 typedef struct Rtc__SignalRequest Rtc__SignalRequest;
 typedef struct Rtc__SignalResponse Rtc__SignalResponse;
+typedef struct Rtc__Compression Rtc__Compression;
+typedef struct Rtc__Upload Rtc__Upload;
 typedef struct Rtc__RtcConfig Rtc__RtcConfig;
 typedef struct Rtc__IceServer Rtc__IceServer;
 typedef struct Rtc__SessionDescription Rtc__SessionDescription;
@@ -177,6 +179,24 @@ typedef enum _Rtc__CloseReason {
     PROTOBUF_C__FORCE_ENUM_TO_BE_INT_SIZE(RTC__CLOSE_REASON)
 } Rtc__CloseReason;
 /*
+ * 用户角色
+ */
+typedef enum _Rtc__Role {
+  /*
+   * 无角色
+   */
+  RTC__ROLE__ROLE_NONE = 0,
+  /*
+   * 主叫方
+   */
+  RTC__ROLE__ROLE_CALLER = 1,
+  /*
+   * 被叫方
+   */
+  RTC__ROLE__ROLE_CALLEE = 2
+    PROTOBUF_C__FORCE_ENUM_TO_BE_INT_SIZE(RTC__ROLE)
+} Rtc__Role;
+/*
  * 操作系统类型
  */
 typedef enum _Rtc__OsType {
@@ -294,7 +314,8 @@ typedef enum {
   RTC__SIGNAL_REQUEST__MESSAGE_NODE_RTTS = 16,
   RTC__SIGNAL_REQUEST__MESSAGE_MUTE = 17,
   RTC__SIGNAL_REQUEST__MESSAGE_ADD_STATS = 18,
-  RTC__SIGNAL_REQUEST__MESSAGE_SELECT_CHANNEL = 20
+  RTC__SIGNAL_REQUEST__MESSAGE_SELECT_CHANNEL = 20,
+  RTC__SIGNAL_REQUEST__MESSAGE_UPLOAD = 21
     PROTOBUF_C__FORCE_ENUM_TO_BE_INT_SIZE(RTC__SIGNAL_REQUEST__MESSAGE__CASE)
 } Rtc__SignalRequest__MessageCase;
 
@@ -312,6 +333,10 @@ struct  Rtc__SignalRequest
    * 通道标识，对于 SFU+Mesh 模式，0=SFU通道，1=Mesh通道
    */
   uint32_t channel;
+  /*
+   * 目标 Peer ID，可选
+   */
+  char *to;
   Rtc__SignalRequest__MessageCase message_case;
   union {
     /*
@@ -380,6 +405,10 @@ struct  Rtc__SignalRequest
      */
     Rtc__Subscribe *subscribe;
     /*
+     * 上传文件（例如：上传日志文件）
+     */
+    Rtc__Upload *upload;
+    /*
      * Mesh 向远端发送音量
      */
     Rtc__Vad *vad;
@@ -391,7 +420,7 @@ struct  Rtc__SignalRequest
 };
 #define RTC__SIGNAL_REQUEST__INIT \
  { PROTOBUF_C_MESSAGE_INIT (&rtc__signal_request__descriptor) \
-, 0, 0, RTC__SIGNAL_REQUEST__MESSAGE__NOT_SET, {0} }
+, 0, 0, (char *)protobuf_c_empty_string, RTC__SIGNAL_REQUEST__MESSAGE__NOT_SET, {0} }
 
 
 typedef enum {
@@ -416,7 +445,8 @@ typedef enum {
   RTC__SIGNAL_RESPONSE__MESSAGE_NODE_LIST = 19,
   RTC__SIGNAL_RESPONSE__MESSAGE_STATES = 20,
   RTC__SIGNAL_RESPONSE__MESSAGE_CONFIG = 22,
-  RTC__SIGNAL_RESPONSE__MESSAGE_TOKEN = 23
+  RTC__SIGNAL_RESPONSE__MESSAGE_TOKEN = 23,
+  RTC__SIGNAL_RESPONSE__MESSAGE_COMPRESSION = 24
     PROTOBUF_C__FORCE_ENUM_TO_BE_INT_SIZE(RTC__SIGNAL_RESPONSE__MESSAGE__CASE)
 } Rtc__SignalResponse__MessageCase;
 
@@ -434,6 +464,10 @@ struct  Rtc__SignalResponse
    * 通道标识，对于 SFU+Mesh 模式，0=SFU通道，1=Mesh通道
    */
   uint32_t channel;
+  /*
+   * 来源 Peer ID，可选
+   */
+  char *from;
   Rtc__SignalResponse__MessageCase message_case;
   union {
     /*
@@ -469,6 +503,10 @@ struct  Rtc__SignalResponse
      * 服务端转发广播消息
      */
     Rtc__Broadcast *broadcast;
+    /*
+     * 下发压缩配置
+     */
+    Rtc__Compression *compression;
     /*
      * Mesh 下发 RTC 配置
      */
@@ -525,7 +563,43 @@ struct  Rtc__SignalResponse
 };
 #define RTC__SIGNAL_RESPONSE__INIT \
  { PROTOBUF_C_MESSAGE_INIT (&rtc__signal_response__descriptor) \
-, 0, 0, RTC__SIGNAL_RESPONSE__MESSAGE__NOT_SET, {0} }
+, 0, 0, (char *)protobuf_c_empty_string, RTC__SIGNAL_RESPONSE__MESSAGE__NOT_SET, {0} }
+
+
+/*
+ * 压缩配置
+ */
+struct  Rtc__Compression
+{
+  ProtobufCMessage base;
+  /*
+   * Zstandard 字典数据，字典未压缩或已压缩，客户端应该根据头部自动判断是否需要解压缩
+   */
+  ProtobufCBinaryData zstd_dict;
+};
+#define RTC__COMPRESSION__INIT \
+ { PROTOBUF_C_MESSAGE_INIT (&rtc__compression__descriptor) \
+, {0,NULL} }
+
+
+/*
+ * 上传文件
+ */
+struct  Rtc__Upload
+{
+  ProtobufCMessage base;
+  /*
+   * 文件名，可以包含相对路径
+   */
+  char *filename;
+  /*
+   * 文件内容
+   */
+  ProtobufCBinaryData content;
+};
+#define RTC__UPLOAD__INIT \
+ { PROTOBUF_C_MESSAGE_INIT (&rtc__upload__descriptor) \
+, (char *)protobuf_c_empty_string, {0,NULL} }
 
 
 /*
@@ -588,10 +662,14 @@ struct  Rtc__SessionDescription
    * 对应 RTCSessionDescriptionInit.sdp
    */
   char *sdp;
+  /*
+   * 对应 RTCSessionDescriptionInit.sdp，用 Zstandard 压缩后的数据
+   */
+  ProtobufCBinaryData sdp_z;
 };
 #define RTC__SESSION_DESCRIPTION__INIT \
  { PROTOBUF_C_MESSAGE_INIT (&rtc__session_description__descriptor) \
-, RTC__SDP_TYPE__SDP_TYPE_UNKNOWN, (char *)protobuf_c_empty_string }
+, RTC__SDP_TYPE__SDP_TYPE_UNKNOWN, (char *)protobuf_c_empty_string, {0,NULL} }
 
 
 /*
@@ -1140,10 +1218,14 @@ struct  Rtc__PeerInfo
    * 客户端操作系统版本号
    */
   uint32_t os_version;
+  /*
+   * 用户角色
+   */
+  Rtc__Role role;
 };
 #define RTC__PEER_INFO__INIT \
  { PROTOBUF_C_MESSAGE_INIT (&rtc__peer_info__descriptor) \
-, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, 0,NULL, 0,NULL, NULL, (char *)protobuf_c_empty_string, 0, NULL, 0, RTC__OS_TYPE__OS_TYPE_UNKNOWN, 0 }
+, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, 0,NULL, 0,NULL, NULL, (char *)protobuf_c_empty_string, 0, NULL, 0, RTC__OS_TYPE__OS_TYPE_UNKNOWN, 0, RTC__ROLE__ROLE_NONE }
 
 
 /*
@@ -1185,10 +1267,14 @@ struct  Rtc__NodeList
    * 客户端 IP
    */
   char *client_ip;
+  /*
+   * 服务端当前时间，单位：毫秒，Unix Time（1970-01-01 UTC 起的毫秒数）
+   */
+  int64_t current_time;
 };
 #define RTC__NODE_LIST__INIT \
  { PROTOBUF_C_MESSAGE_INIT (&rtc__node_list__descriptor) \
-, 0,NULL, 0, (char *)protobuf_c_empty_string }
+, 0,NULL, 0, (char *)protobuf_c_empty_string, 0 }
 
 
 /*
@@ -1425,10 +1511,18 @@ struct  Rtc__Stats
    * 视频帧分辨率高度
    */
   uint32_t frame_height;
+  /*
+   * 用户角色
+   */
+  Rtc__Role role;
+  /*
+   * 是否选中通道（模式）
+   */
+  protobuf_c_boolean hit;
 };
 #define RTC__STATS__INIT \
  { PROTOBUF_C_MESSAGE_INIT (&rtc__stats__descriptor) \
-, 0, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, RTC__SOURCE__SOURCE_SERVER, RTC__DATA_TYPE__DATA_TYPE_UNKNOWN, RTC__DIRECTION__DIRECTION_UNKNOWN, 0, 0, 0, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, 0, 0, RTC__PROTOCOL__PROTOCOL_UNKNOWN, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, 0, (char *)protobuf_c_empty_string, 0, 0, (char *)protobuf_c_empty_string, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }
+, 0, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, RTC__SOURCE__SOURCE_SERVER, RTC__DATA_TYPE__DATA_TYPE_UNKNOWN, RTC__DIRECTION__DIRECTION_UNKNOWN, 0, 0, 0, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, 0, 0, RTC__PROTOCOL__PROTOCOL_UNKNOWN, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, 0, (char *)protobuf_c_empty_string, 0, 0, (char *)protobuf_c_empty_string, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, RTC__ROLE__ROLE_NONE, 0 }
 
 
 /* Rtc__SignalRequest methods */
@@ -1468,6 +1562,44 @@ Rtc__SignalResponse *
                       const uint8_t       *data);
 void   rtc__signal_response__free_unpacked
                      (Rtc__SignalResponse *message,
+                      ProtobufCAllocator *allocator);
+/* Rtc__Compression methods */
+void   rtc__compression__init
+                     (Rtc__Compression         *message);
+size_t rtc__compression__get_packed_size
+                     (const Rtc__Compression   *message);
+size_t rtc__compression__pack
+                     (const Rtc__Compression   *message,
+                      uint8_t             *out);
+size_t rtc__compression__pack_to_buffer
+                     (const Rtc__Compression   *message,
+                      ProtobufCBuffer     *buffer);
+Rtc__Compression *
+       rtc__compression__unpack
+                     (ProtobufCAllocator  *allocator,
+                      size_t               len,
+                      const uint8_t       *data);
+void   rtc__compression__free_unpacked
+                     (Rtc__Compression *message,
+                      ProtobufCAllocator *allocator);
+/* Rtc__Upload methods */
+void   rtc__upload__init
+                     (Rtc__Upload         *message);
+size_t rtc__upload__get_packed_size
+                     (const Rtc__Upload   *message);
+size_t rtc__upload__pack
+                     (const Rtc__Upload   *message,
+                      uint8_t             *out);
+size_t rtc__upload__pack_to_buffer
+                     (const Rtc__Upload   *message,
+                      ProtobufCBuffer     *buffer);
+Rtc__Upload *
+       rtc__upload__unpack
+                     (ProtobufCAllocator  *allocator,
+                      size_t               len,
+                      const uint8_t       *data);
+void   rtc__upload__free_unpacked
+                     (Rtc__Upload *message,
                       ProtobufCAllocator *allocator);
 /* Rtc__RtcConfig methods */
 void   rtc__rtc_config__init
@@ -2018,6 +2150,12 @@ typedef void (*Rtc__SignalRequest_Closure)
 typedef void (*Rtc__SignalResponse_Closure)
                  (const Rtc__SignalResponse *message,
                   void *closure_data);
+typedef void (*Rtc__Compression_Closure)
+                 (const Rtc__Compression *message,
+                  void *closure_data);
+typedef void (*Rtc__Upload_Closure)
+                 (const Rtc__Upload *message,
+                  void *closure_data);
 typedef void (*Rtc__RtcConfig_Closure)
                  (const Rtc__RtcConfig *message,
                   void *closure_data);
@@ -2121,6 +2259,7 @@ extern const ProtobufCEnumDescriptor    rtc__ice_policy__descriptor;
 extern const ProtobufCEnumDescriptor    rtc__sdp_type__descriptor;
 extern const ProtobufCEnumDescriptor    rtc__peer_state__descriptor;
 extern const ProtobufCEnumDescriptor    rtc__close_reason__descriptor;
+extern const ProtobufCEnumDescriptor    rtc__role__descriptor;
 extern const ProtobufCEnumDescriptor    rtc__os_type__descriptor;
 extern const ProtobufCEnumDescriptor    rtc__srtp_profile__descriptor;
 extern const ProtobufCEnumDescriptor    rtc__channel__descriptor;
@@ -2131,6 +2270,8 @@ extern const ProtobufCEnumDescriptor    rtc__protocol__descriptor;
 extern const ProtobufCEnumDescriptor    rtc__data_type__descriptor;
 extern const ProtobufCMessageDescriptor rtc__signal_request__descriptor;
 extern const ProtobufCMessageDescriptor rtc__signal_response__descriptor;
+extern const ProtobufCMessageDescriptor rtc__compression__descriptor;
+extern const ProtobufCMessageDescriptor rtc__upload__descriptor;
 extern const ProtobufCMessageDescriptor rtc__rtc_config__descriptor;
 extern const ProtobufCMessageDescriptor rtc__ice_server__descriptor;
 extern const ProtobufCMessageDescriptor rtc__session_description__descriptor;
