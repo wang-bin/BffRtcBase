@@ -657,13 +657,14 @@ void uploadLog(const std::string& uploadUrl,
                const std::string& logPathOrName,
                HttpClient::CompletionCallback cb)
 {
-    auto name = basenameFromPath(logPathOrName);
-    INFO("uploadLog name=%s url=%s size=%zu", name.c_str(), uploadUrl.c_str(), payload.size());
+    const auto originalName = basenameFromPath(logPathOrName);
+    auto name = originalName;
 
     const auto& logger = FileLogger::shared();
     const auto room = logger.getRoom(name);
     const auto uploadServer = logger.getUploadServer(name);
     name = uploadLogName(name, room);
+    INFO("uploadLog name=%s finalName=%s url=%s size=%zu", originalName.c_str(), name.c_str(), uploadUrl.c_str(), payload.size());
     const auto encodedName = urlEncodeQueryComponent(name);
 
     std::string url = uploadUrl;
