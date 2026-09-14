@@ -12,6 +12,8 @@
 #endif
 #include <fstream>
 #include <filesystem>
+#include <chrono>
+#include <ctime>
 #include <mutex>
 #include <unordered_set>
 #include <vector>
@@ -514,6 +516,87 @@ std::string urlEncodeQueryComponent(const std::string& value)
     return out;
 }
 
+std::string uploadLogDate(const std::string& basename, std::string::size_type timezoneStart, int64_t clockOffset)
+{
+    const auto timestampStart = timezoneStart - 14;
+    const auto rawDate = basename.substr(timestampStart, 8);
+    if (clockOffset == 0) {
+        return rawDate;
+    }
+
+    auto parseDigits = [&](std::string::size_type start, std::string::size_type count, int* value) {
+        int parsed = 0;
+        if (start + count > basename.size()) {
+            return false;
+        }
+        for (std::string::size_type i = 0; i < count; ++i) {
+            const auto c = basename[start + i];
+            if (c < '0' || c > '9') {
+                return false;
+            }
+            parsed = parsed * 10 + (c - '0');
+        }
+        *value = parsed;
+        return true;
+    };
+
+    std::tm timestamp{};
+    int year = 0;
+    int month = 0;
+    int day = 0;
+    int hour = 0;
+    int minute = 0;
+    int second = 0;
+    if (!parseDigits(timestampStart, 4, &year)
+        || !parseDigits(timestampStart + 4, 2, &month)
+        || !parseDigits(timestampStart + 6, 2, &day)
+        || !parseDigits(timestampStart + 8, 2, &hour)
+        || !parseDigits(timestampStart + 10, 2, &minute)
+        || !parseDigits(timestampStart + 12, 2, &second)
+        || month < 1 || month > 12 || day < 1 || day > 31
+        || hour > 23 || minute > 59 || second > 60) {
+        return {};
+    }
+    timestamp.tm_year = year - 1900;
+    timestamp.tm_mon = month - 1;
+    timestamp.tm_mday = day;
+    timestamp.tm_hour = hour;
+    timestamp.tm_min = minute;
+    timestamp.tm_sec = second;
+
+    // File names are generated as UTC timestamps. Respect a numeric timezone
+    // suffix as well, so older files with a non-zero suffix are handled too.
+    if (timezoneStart + 5 <= basename.size()) {
+        int zoneHour = 0;
+        int zoneMinute = 0;
+        if (!parseDigits(timezoneStart + 1, 2, &zoneHour)
+            || !parseDigits(timezoneStart + 3, 2, &zoneMinute)
+            || zoneHour > 23 || zoneMinute > 59) {
+            return {};
+        }
+        const auto zoneSeconds = (zoneHour * 60 + zoneMinute) * 60;
+        const auto sign = basename[timezoneStart] == '-' ? -1 : 1;
+        timestamp.tm_sec -= sign * zoneSeconds;
+    }
+
+    const auto epoch = ::timegm(&timestamp);
+    if (epoch == static_cast<std::time_t>(-1)) {
+        return {};
+    }
+    const auto shifted = std::chrono::system_clock::from_time_t(epoch)
+        + std::chrono::milliseconds(clockOffset);
+    const auto shiftedEpoch = std::chrono::system_clock::to_time_t(shifted);
+    std::tm shiftedTimestamp{};
+    if (!::gmtime_r(&shiftedEpoch, &shiftedTimestamp)) {
+        return {};
+    }
+    char date[9] = {};
+    if (std::strftime(date, sizeof(date), "%Y%m%d", &shiftedTimestamp) == 0) {
+        return {};
+    }
+    return date;
+}
+
 // Match iOS/Android: id-yyyyMMddHHmmss±zzzz.log → yyyyMMdd/room/id.log when room is set.
 std::string uploadLogName(const std::string& basename, const std::string& room)
 {
@@ -524,7 +607,10 @@ std::string uploadLogName(const std::string& basename, const std::string& room)
     if (tz == std::string::npos || tz <= 14) {
         return basename;
     }
-    const auto yyyyMMdd = basename.substr(tz - 14, 8);
+    const auto yyyyMMdd = uploadLogDate(basename, tz, FileLogger::shared().clockOffset());
+    if (yyyyMMdd.empty()) {
+        return basename;
+    }
     const auto dash = basename.find('-');
     if (dash == std::string::npos || dash == 0) {
         return basename;

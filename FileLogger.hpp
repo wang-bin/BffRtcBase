@@ -26,6 +26,10 @@ public:
     void remove(const std::string& path);
     std::string currentLogName() const;
 
+    // Clock offset in milliseconds, applied to log timestamps and upload dates.
+    void setClockOffset(int64_t milliseconds);
+    int64_t clockOffset() const;
+
     void setRetentionSeconds(int64_t seconds);
 
 private:

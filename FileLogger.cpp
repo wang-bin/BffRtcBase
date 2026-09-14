@@ -81,9 +81,9 @@ string ThreadName()
     return "?";
 }
 
-string LocalTimeWithMs()
+string LocalTimeWithMs(int64_t clockOffset)
 {
-    const auto now = chrono::system_clock::now();
+    const auto now = chrono::system_clock::now() + chrono::milliseconds(clockOffset);
     const auto tt = chrono::system_clock::to_time_t(now);
     tm tmBuf{};
 #if (_WIN32 + 0)
@@ -100,9 +100,9 @@ string LocalTimeWithMs()
 }
 
 // Match Android/iOS "yyyy-MM-dd Z", e.g. "2026-08-20 +0800".
-string LocalDateWithZone()
+string LocalDateWithZone(int64_t clockOffset)
 {
-    const auto now = chrono::system_clock::now();
+    const auto now = chrono::system_clock::now() + chrono::milliseconds(clockOffset);
     const auto tt = chrono::system_clock::to_time_t(now);
     tm tmBuf{};
 #if (_WIN32 + 0)
@@ -208,6 +208,7 @@ struct FileLogger::Impl {
     string logName;
     string pendingLogs;
     int64_t retentionSeconds = kDefaultRetentionSeconds;
+    int64_t clockOffset = 0;
 
     Impl()
     {
@@ -391,7 +392,7 @@ bool FileLogger::newLog(const string& userId, const string& logDir)
     if (!pending.empty()) {
         d_->EnqueueWrite(std::move(pending));
     }
-    log(LogLevel::Debug, "log", "Date: " + LocalDateWithZone());
+    log(LogLevel::Debug, "log", "Date: " + LocalDateWithZone(clockOffset()));
     if (const auto device = DeviceInfoLine(); !device.empty()) {
         log(LogLevel::Debug, "log", device);
     }
@@ -436,7 +437,7 @@ bool FileLogger::write(const string& text)
 
 void FileLogger::log(LogLevel level, const string& tag, const string& message)
 {
-    const auto line = LocalTimeWithMs() + " " + LevelName(level) + " (" + ThreadName() + ") " + tag + ": " + message + "\n";
+    const auto line = LocalTimeWithMs(clockOffset()) + " " + LevelName(level) + " (" + ThreadName() + ") " + tag + ": " + message + "\n";
     if (!write(line)) {
         const scoped_lock lock(d_->mtx);
         d_->pendingLogs += line;
@@ -533,6 +534,18 @@ string FileLogger::currentLogName() const
 {
     const scoped_lock lock(d_->mtx);
     return d_->logName;
+}
+
+void FileLogger::setClockOffset(int64_t milliseconds)
+{
+    const scoped_lock lock(d_->mtx);
+    d_->clockOffset = milliseconds;
+}
+
+int64_t FileLogger::clockOffset() const
+{
+    const scoped_lock lock(d_->mtx);
+    return d_->clockOffset;
 }
 
 void FileLogger::setRetentionSeconds(int64_t seconds)

@@ -53,6 +53,11 @@ JSPPRTC_JNI(void, FileLogger_nativeStop)
     bff::FileLogger::shared().stop();
 }
 
+JSPPRTC_JNI(void, FileLogger_nativeSetClockOffset, jlong milliseconds)
+{
+    bff::FileLogger::shared().setClockOffset(static_cast<int64_t>(milliseconds));
+}
+
 JSPPRTC_JNI(void, FileLogger_nativeSetUploadServer, jstring server)
 {
     bff::FileLogger::shared().setUploadServer(jmi::to_string(server, env));
