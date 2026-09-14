@@ -8,6 +8,7 @@
 #include <thread>
 
 #include "HttpClient.h"
+#include "FileLogger.hpp"
 #include "defs.h"
 #include "json.hpp"
 
@@ -255,7 +256,11 @@ void NodeSelector::updateNodesInternal(const std::string& server,
         hc.header("Authorization", *token);
     }
 
-    hc.get(url, [this, extraServers, completionHandler = std::move(completionHandler)](const HttpClient::Result& r) mutable {
+    const auto requestTime = std::chrono::system_clock::now().time_since_epoch()
+                           / std::chrono::milliseconds{1};
+    hc.get(url, [this, extraServers, completionHandler = std::move(completionHandler), requestTime](const HttpClient::Result& r) mutable {
+        const auto responseTime = std::chrono::system_clock::now().time_since_epoch()
+                                / std::chrono::milliseconds{1};
         bool sort = false;
         auto autoDone = [&] {
             if (completionHandler) completionHandler();
@@ -305,6 +310,17 @@ void NodeSelector::updateNodesInternal(const std::string& server,
         std::string ip;
         if (j.contains("client_ip") && j["client_ip"].is_string()) {
             ip = j["client_ip"].get<std::string>();
+        }
+
+        if (j.contains("current_time") && j["current_time"].is_number_integer()) {
+            const auto serverTime = j["current_time"].get<int64_t>();
+            if (serverTime > 0) {
+                // current_time 是服务端处理请求的时刻；用客户端收发时间中点估算，降低网络时延影响。
+                const auto clientTime = requestTime + (responseTime - requestTime) / 2;
+                const auto clockOffset = serverTime - static_cast<int64_t>(clientTime);
+                FileLogger::shared().setClockOffset(clockOffset);
+                INFO("nodelist clock offset: %lldms", static_cast<long long>(clockOffset));
+            }
         }
 
         sort = true;
