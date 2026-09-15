@@ -18,6 +18,7 @@
 #include "QuicSocket.h"
 #include "SniUrl.h"
 #include "WebSocket.h"
+#include "ZstdCodec.hpp"
 #include "json.hpp"
 #include "Log.hpp"
 #define TAG "Signal"
@@ -1473,6 +1474,22 @@ void Signal::handleReceiveSignalResponse(const Rtc__SignalResponse* signalRespon
             d->token = signalResponse->token ? signalResponse->token : "";
             HttpClient::setAuthToken(d->token);
             break;
+        case RTC__SIGNAL_RESPONSE__MESSAGE_COMPRESSION: {
+            // 服务端下发 zstd 字典；Step1 仅内存安装，落盘与 URL 在后续步骤
+            const auto* compression = signalResponse->compression;
+            if (!compression) {
+                break;
+            }
+            const auto& bin = compression->zstd_dict;
+            span<const uint8_t> dict{reinterpret_cast<const uint8_t*>(bin.data), bin.len};
+            if (Zstd::shared().setDict(dict)) {
+                const auto md5 = Zstd::shared().dictMd5();
+                INFO("compression dict set, size=%zu md5=%s", bin.len, md5.c_str());
+            } else {
+                ERROR("compression dict rejected, size=%zu", bin.len);
+            }
+            break;
+        }
         default:
             break;
     }
