@@ -66,8 +66,9 @@ function(find_xcframework VAR XFWK_PATH)
 
     # 6. 识别内部结构并生成编译/链接参数
     if(EXISTS "${_INNER_PATH}/${_XFWK_NAME}.framework")
-        # 结构 A: 标准 .framework 结构
-        set(${VAR}_CFLAGS "-F${_INNER_PATH}" PARENT_SCOPE)
+        # 结构 A: 标准 .framework 结构；额外 -I Headers 以便 #include <zstd.h> 等
+        set(_FWK_HEADERS "${_INNER_PATH}/${_XFWK_NAME}.framework/Headers")
+        set(${VAR}_CFLAGS "-F${_INNER_PATH} -I${_FWK_HEADERS}" PARENT_SCOPE)
         set(${VAR}_LFLAGS "-F${_INNER_PATH} -framework ${_XFWK_NAME}" PARENT_SCOPE)
 
     elseif(EXISTS "${_INNER_PATH}/Headers")
