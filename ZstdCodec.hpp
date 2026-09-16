@@ -47,6 +47,9 @@ public:
     // 将当前字典原始字节（优先 dict_z_，否则 dict_）原子写入 cachePath。
     bool saveCachedDict() const;
 
+    // 明文 sdp 优先；否则用 sdp_z 解压。与 JS Signal.ts 对齐。
+    static std::string resolveSdp(std::string_view sdp, std::span<const uint8_t> sdp_z);
+
     std::vector<uint8_t> encode(std::span<const uint8_t> input, bool useDict = true) const;
     std::vector<uint8_t> encode(std::string_view input, bool useDict = true) const;
     std::string decode(std::span<const uint8_t> input) const;
