@@ -250,6 +250,22 @@ bool Zstd::saveCachedDict() const {
     return true;
 }
 
+string Zstd::resolveSdp(string_view sdp, span<const uint8_t> sdp_z) {
+    if (!sdp.empty()) {
+        return string(sdp);
+    }
+    if (sdp_z.empty()) {
+        return {};
+    }
+    auto out = shared().decode(sdp_z);
+    if (out.empty()) {
+        ERROR("zstd decode sdp failed, compressed=%zu", sdp_z.size());
+        return {};
+    }
+    INFO("zstd decode sdp, compressed=%zu uncompressed=%zu", sdp_z.size(), out.size());
+    return out;
+}
+
 vector<uint8_t> Zstd::encode(span<const uint8_t> input, bool useDict) const {
     lock_guard lock(mtx_);
     if (!cctx_ || input.empty()) {

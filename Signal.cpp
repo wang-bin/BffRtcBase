@@ -8,9 +8,11 @@
 #include <mutex>
 #include <optional>
 #include <set>
+#include <span>
 #include <thread>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 #include "NodeSelector.h"
 #include "PbCJson.h"
@@ -1186,7 +1188,20 @@ void Signal::recreate(int channel) {
 void Signal::offer(const std::string& sdp, int channel) {
     Rtc__SessionDescription offer = RTC__SESSION_DESCRIPTION__INIT;
     offer.type = RTC__SDP_TYPE__SDP_TYPE_OFFER;
-    offer.sdp = const_cast<char*>(sdp.c_str());
+    vector<uint8_t> sdp_z;
+    if (Config::Shared().signal.compression) {
+        sdp_z = Zstd::shared().encode(sdp);
+        if (!sdp_z.empty()) {
+            // 与 JS 一致：压缩成功则只发 sdp_z
+            offer.sdp_z = {.len = sdp_z.size(), .data = sdp_z.data()};
+            INFO("encode offer, compressed=%zu uncompressed=%zu", sdp_z.size(), sdp.size());
+        } else {
+            offer.sdp = const_cast<char*>(sdp.c_str());
+            ERROR("encode offer failed, fallback to plain sdp");
+        }
+    } else {
+        offer.sdp = const_cast<char*>(sdp.c_str());
+    }
 
     Rtc__SignalRequest req = RTC__SIGNAL_REQUEST__INIT;
     req.channel = static_cast<uint32_t>(channel);
@@ -1199,7 +1214,19 @@ void Signal::offer(const std::string& sdp, int channel) {
 void Signal::answer(const std::string& sdp, int channel) {
     Rtc__SessionDescription answer = RTC__SESSION_DESCRIPTION__INIT;
     answer.type = RTC__SDP_TYPE__SDP_TYPE_ANSWER;
-    answer.sdp = const_cast<char*>(sdp.c_str());
+    vector<uint8_t> sdp_z;
+    if (Config::Shared().signal.compression) {
+        sdp_z = Zstd::shared().encode(sdp);
+        if (!sdp_z.empty()) {
+            answer.sdp_z = {.len = sdp_z.size(), .data = sdp_z.data()};
+            INFO("encode answer, compressed=%zu uncompressed=%zu", sdp_z.size(), sdp.size());
+        } else {
+            answer.sdp = const_cast<char*>(sdp.c_str());
+            ERROR("encode answer failed, fallback to plain sdp");
+        }
+    } else {
+        answer.sdp = const_cast<char*>(sdp.c_str());
+    }
 
     Rtc__SignalRequest req = RTC__SIGNAL_REQUEST__INIT;
     req.channel = static_cast<uint32_t>(channel);
@@ -1352,8 +1379,17 @@ void Signal::handleReceiveSignalResponse(const Rtc__SignalResponse* signalRespon
             break;
         }
         case RTC__SIGNAL_RESPONSE__MESSAGE_OFFER: {
-            const std::string sdp = (signalResponse->offer && signalResponse->offer->sdp)
-                ? signalResponse->offer->sdp : "";
+            const auto* desc = signalResponse->offer;
+            const string plain = (desc && desc->sdp) ? desc->sdp : "";
+            span<const uint8_t> z;
+            if (desc && desc->sdp_z.len > 0 && desc->sdp_z.data) {
+                z = {desc->sdp_z.data, desc->sdp_z.len};
+            }
+            const auto sdp = Zstd::resolveSdp(plain, z);
+            if (sdp.empty()) {
+                ERROR("offer sdp empty after resolve");
+                break;
+            }
             if (sdp == d->last_offer) {
                 LOGW("offer sdp not changed, ignore");
             } else {
@@ -1364,11 +1400,24 @@ void Signal::handleReceiveSignalResponse(const Rtc__SignalResponse* signalRespon
             }
             break;
         }
-        case RTC__SIGNAL_RESPONSE__MESSAGE_ANSWER:
-            if (listener && signalResponse->answer && signalResponse->answer->sdp) {
-                listener->onAnswer(signalResponse->answer->sdp);
+        case RTC__SIGNAL_RESPONSE__MESSAGE_ANSWER: {
+            const auto* desc = signalResponse->answer;
+            if (!listener || !desc) {
+                break;
+            }
+            const string plain = desc->sdp ? desc->sdp : "";
+            span<const uint8_t> z;
+            if (desc->sdp_z.len > 0 && desc->sdp_z.data) {
+                z = {desc->sdp_z.data, desc->sdp_z.len};
+            }
+            const auto sdp = Zstd::resolveSdp(plain, z);
+            if (!sdp.empty()) {
+                listener->onAnswer(sdp);
+            } else {
+                ERROR("answer sdp empty after resolve");
             }
             break;
+        }
         case RTC__SIGNAL_RESPONSE__MESSAGE_CANDIDATE: {
             if (listener && signalResponse->candidate) {
                 IceCandidate c;
