@@ -1475,7 +1475,7 @@ void Signal::handleReceiveSignalResponse(const Rtc__SignalResponse* signalRespon
             HttpClient::setAuthToken(d->token);
             break;
         case RTC__SIGNAL_RESPONSE__MESSAGE_COMPRESSION: {
-            // 服务端下发 zstd 字典；Step1 仅内存安装，落盘与 URL 在后续步骤
+            // 服务端下发 zstd 字典：安装到内存并落盘，供下次 start 填 zd=
             const auto* compression = signalResponse->compression;
             if (!compression) {
                 break;
@@ -1484,6 +1484,7 @@ void Signal::handleReceiveSignalResponse(const Rtc__SignalResponse* signalRespon
             span<const uint8_t> dict{reinterpret_cast<const uint8_t*>(bin.data), bin.len};
             if (Zstd::shared().setDict(dict)) {
                 const auto md5 = Zstd::shared().dictMd5();
+                Zstd::shared().saveCachedDict();
                 INFO("compression dict set, size=%zu md5=%s", bin.len, md5.c_str());
             } else {
                 ERROR("compression dict rejected, size=%zu", bin.len);

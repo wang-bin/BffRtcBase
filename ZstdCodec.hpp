@@ -37,6 +37,16 @@ public:
     std::vector<uint8_t> dictData() const;
     std::vector<uint8_t> dictZData() const;
 
+    // 平台注入可写目录；字典文件名为 zstd.dict。空目录禁用落盘。
+    void setCacheDir(std::string_view dir);
+    std::string cacheDir() const;
+    std::string cachePath() const;
+
+    // 从 cachePath 读取并 setDict。
+    bool loadCachedDict();
+    // 将当前字典原始字节（优先 dict_z_，否则 dict_）原子写入 cachePath。
+    bool saveCachedDict() const;
+
     std::vector<uint8_t> encode(std::span<const uint8_t> input, bool useDict = true) const;
     std::vector<uint8_t> encode(std::string_view input, bool useDict = true) const;
     std::string decode(std::span<const uint8_t> input) const;
@@ -44,9 +54,11 @@ public:
 private:
     static bool startsWith(std::span<const uint8_t> data, std::span<const uint8_t> magic) noexcept;
     static std::string md5Hex(std::span<const uint8_t> data);
+    static bool writeFileAtomic(const std::string& path, std::span<const uint8_t> data);
 
     mutable std::mutex mtx_;
     int level_ = 3;
+    std::string cache_dir_;
     std::vector<uint8_t> dict_;
     std::vector<uint8_t> dict_z_;
     std::string dict_hash_;

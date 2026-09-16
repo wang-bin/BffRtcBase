@@ -8,10 +8,13 @@
 #include <array>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 
 #define TAG "zstd"
 
 using namespace std;
+namespace fs = std::filesystem;
 
 namespace bff {
 
@@ -19,6 +22,7 @@ namespace {
 
 constexpr uint8_t kZstdMagic[] = {0x28, 0xb5, 0x2f, 0xfd};
 constexpr uint8_t kDictMagic[] = {0x37, 0xa4, 0x30, 0xec};
+constexpr const char* kDictFileName = "zstd.dict";
 
 } // namespace
 
@@ -129,6 +133,121 @@ vector<uint8_t> Zstd::dictData() const {
 vector<uint8_t> Zstd::dictZData() const {
     lock_guard lock(mtx_);
     return dict_z_;
+}
+
+void Zstd::setCacheDir(string_view dir) {
+    lock_guard lock(mtx_);
+    cache_dir_.assign(dir);
+    while (!cache_dir_.empty() && (cache_dir_.back() == '/' || cache_dir_.back() == '\\')) {
+        cache_dir_.pop_back();
+    }
+}
+
+string Zstd::cacheDir() const {
+    lock_guard lock(mtx_);
+    return cache_dir_;
+}
+
+string Zstd::cachePath() const {
+    lock_guard lock(mtx_);
+    if (cache_dir_.empty()) {
+        return {};
+    }
+    return (fs::path(cache_dir_) / kDictFileName).string();
+}
+
+bool Zstd::writeFileAtomic(const string& path, span<const uint8_t> data) {
+    if (path.empty() || data.empty()) {
+        return false;
+    }
+    error_code ec;
+    const auto file = fs::path(path);
+    fs::create_directories(file.parent_path(), ec);
+    if (ec) {
+        ERROR("zstd create cache dir failed: %s path=%s", ec.message().c_str(), path.c_str());
+        return false;
+    }
+    const auto tmp = file.string() + ".tmp";
+    {
+        ofstream ofs(tmp, ios::binary | ios::trunc);
+        if (!ofs) {
+            ERROR("zstd open temp dict failed path=%s", tmp.c_str());
+            return false;
+        }
+        ofs.write(reinterpret_cast<const char*>(data.data()), static_cast<streamsize>(data.size()));
+        if (!ofs) {
+            ERROR("zstd write temp dict failed path=%s", tmp.c_str());
+            fs::remove(tmp, ec);
+            return false;
+        }
+    }
+    fs::rename(tmp, file, ec);
+    if (ec) {
+        // Windows 上目标存在时 rename 可能失败，先删再试
+        fs::remove(file, ec);
+        fs::rename(tmp, file, ec);
+        if (ec) {
+            ERROR("zstd rename dict failed: %s path=%s", ec.message().c_str(), path.c_str());
+            fs::remove(tmp, ec);
+            return false;
+        }
+    }
+    return true;
+}
+
+bool Zstd::loadCachedDict() {
+    const auto path = cachePath();
+    if (path.empty()) {
+        return false;
+    }
+    error_code ec;
+    if (!fs::is_regular_file(path, ec) || ec) {
+        return false;
+    }
+    const auto size = fs::file_size(path, ec);
+    if (ec || size == 0 || size > 64 * 1024 * 1024) {
+        ERROR("zstd load cached dict bad size path=%s", path.c_str());
+        return false;
+    }
+    ifstream ifs(path, ios::binary);
+    if (!ifs) {
+        ERROR("zstd load cached dict open failed path=%s", path.c_str());
+        return false;
+    }
+    vector<uint8_t> data(static_cast<size_t>(size));
+    ifs.read(reinterpret_cast<char*>(data.data()), static_cast<streamsize>(data.size()));
+    if (!ifs || static_cast<size_t>(ifs.gcount()) != data.size()) {
+        ERROR("zstd load cached dict truncated path=%s", path.c_str());
+        return false;
+    }
+    if (!setDict(data)) {
+        ERROR("zstd load cached dict rejected, size=%zu path=%s", data.size(), path.c_str());
+        return false;
+    }
+    const auto md5 = dictMd5();
+    INFO("zstd loaded cached dict, size=%zu md5=%s path=%s", data.size(), md5.c_str(), path.c_str());
+    return true;
+}
+
+bool Zstd::saveCachedDict() const {
+    const auto path = cachePath();
+    if (path.empty()) {
+        return false;
+    }
+    vector<uint8_t> bytes;
+    {
+        lock_guard lock(mtx_);
+        // 与 JS 一致：落盘原始下发字节（压缩字典优先）
+        bytes = dict_z_.empty() ? dict_ : dict_z_;
+    }
+    if (bytes.empty()) {
+        return false;
+    }
+    if (!writeFileAtomic(path, bytes)) {
+        return false;
+    }
+    INFO("zstd saved dict, size=%zu path=%s", bytes.size(), path.c_str());
+    return true;
 }
 
 vector<uint8_t> Zstd::encode(span<const uint8_t> input, bool useDict) const {
