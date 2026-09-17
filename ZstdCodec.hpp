@@ -12,7 +12,8 @@ namespace bff {
 
 // SDP / signaling zstd codec aligned with client-sdk-js Zstd.ts:
 // - dict magic 37 A4 30 EC; optional compressed dict (frame magic 28 B5 2F FD)
-// - MD5 is over compressed blob when present, else raw dict
+// - MD5 对齐 Md5.hashStr(String.fromCharCode(...bytes))：字节→U+00XX→UTF-8 后再 MD5；
+//   有压缩字典时对压缩 blob 做 hash，否则对 raw dict
 // - level default 3; encode may use dictionary when installed
 class Zstd {
 public:
