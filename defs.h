@@ -58,7 +58,6 @@ struct SignalOptions {
     int reconnectMaxTimes = 9999;
     int responseTimeout = 2000;
     bool autoSubscribe = true;
-    bool compression = false;
 };
 
 class Config {
@@ -74,6 +73,9 @@ public:
     bool sni = false;
     // Prefer HTTP/3 (CURL_HTTP_VERSION_3 with TCP fallback). Default on.
     bool http3 = true;
+
+    // SDP / 信令等 zstd 压缩。默认 false。
+    bool compression = false;
 
     // Sent on join (signaling); not WebRTC PeerConnection config.
     RtcIcePolicy icePolicy = RtcIcePolicy::All;
