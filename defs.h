@@ -58,7 +58,6 @@ struct SignalOptions {
     int reconnectMaxTimes = 9999;
     int responseTimeout = 2000;
     bool autoSubscribe = true;
-    bool compression = false;
 };
 
 class Config {
@@ -72,6 +71,9 @@ public:
     // ip -> host mapping for SNI and cert validation.
     std::unordered_map<std::string, std::string> hosts;
     bool sni = false;
+
+    // SDP / 信令等 zstd 压缩。默认 false。
+    bool compression = false;
 
     // Sent on join (signaling); not WebRTC PeerConnection config.
     RtcIcePolicy icePolicy = RtcIcePolicy::All;

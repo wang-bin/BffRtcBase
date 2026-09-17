@@ -1189,7 +1189,7 @@ void Signal::offer(const std::string& sdp, int channel) {
     Rtc__SessionDescription offer = RTC__SESSION_DESCRIPTION__INIT;
     offer.type = RTC__SDP_TYPE__SDP_TYPE_OFFER;
     vector<uint8_t> sdp_z;
-    if (Config::Shared().signal.compression) {
+    if (Config::Shared().compression) {
         sdp_z = Zstd::shared().encode(sdp);
         if (!sdp_z.empty()) {
             // 与 JS 一致：压缩成功则只发 sdp_z
@@ -1215,7 +1215,7 @@ void Signal::answer(const std::string& sdp, int channel) {
     Rtc__SessionDescription answer = RTC__SESSION_DESCRIPTION__INIT;
     answer.type = RTC__SDP_TYPE__SDP_TYPE_ANSWER;
     vector<uint8_t> sdp_z;
-    if (Config::Shared().signal.compression) {
+    if (Config::Shared().compression) {
         sdp_z = Zstd::shared().encode(sdp);
         if (!sdp_z.empty()) {
             answer.sdp_z = {.len = sdp_z.size(), .data = sdp_z.data()};
