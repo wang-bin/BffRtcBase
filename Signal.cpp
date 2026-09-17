@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdio>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -142,6 +143,77 @@ static Rtc__IcePolicy toPbIcePolicy(bff::RtcIcePolicy p) {
         case bff::RtcIcePolicy::TLS: return RTC__ICE_POLICY__ICE_POLICY_RELAY_TLS;
     }
     return RTC__ICE_POLICY__ICE_POLICY_ALL;
+}
+
+// 对齐 ObjC to_string / FileLogger：嵌套消息用 JSON；offer/answer 打未压缩 SDP。
+static string pbJson(const ProtobufCMessage* msg) {
+    if (!msg) {
+        return "null";
+    }
+    string out;
+    if (!bff::messageToJsonString(msg, &out)) {
+        return "?";
+    }
+    return out;
+}
+
+static string resolveDescSdp(const Rtc__SessionDescription* desc) {
+    if (!desc) {
+        return {};
+    }
+    const string plain = desc->sdp ? desc->sdp : "";
+    span<const uint8_t> z;
+    if (desc->sdp_z.len > 0 && desc->sdp_z.data) {
+        z = {desc->sdp_z.data, desc->sdp_z.len};
+    }
+    return bff::Zstd::resolveSdp(plain, z);
+}
+
+static string signalRequestToString(const Rtc__SignalRequest& msg) {
+    switch (msg.message_case) {
+        case RTC__SIGNAL_REQUEST__MESSAGE__NOT_SET:
+            return "Unset";
+        case RTC__SIGNAL_REQUEST__MESSAGE_JOIN:
+            return "Join: " + pbJson(msg.join ? &msg.join->base : nullptr);
+        case RTC__SIGNAL_REQUEST__MESSAGE_OFFER:
+            return "Offer: " + resolveDescSdp(msg.offer);
+        case RTC__SIGNAL_REQUEST__MESSAGE_ANSWER:
+            return "Answer: " + resolveDescSdp(msg.answer);
+        case RTC__SIGNAL_REQUEST__MESSAGE_CANDIDATE:
+            return string("Candidate: ") + (msg.candidate ? msg.candidate : "");
+        case RTC__SIGNAL_REQUEST__MESSAGE_NEGOTIATION:
+            return string("Negotiation: ") + (msg.negotiation ? "1" : "0");
+        case RTC__SIGNAL_REQUEST__MESSAGE_SUBSCRIBE:
+            return "Subscribe: " + pbJson(msg.subscribe ? &msg.subscribe->base : nullptr);
+        case RTC__SIGNAL_REQUEST__MESSAGE_RECREATE:
+            return "Recreate: " + pbJson(msg.recreate ? &msg.recreate->base : nullptr);
+        case RTC__SIGNAL_REQUEST__MESSAGE_LEAVE:
+            return "Leave: " + pbJson(msg.leave ? &msg.leave->base : nullptr);
+        case RTC__SIGNAL_REQUEST__MESSAGE_PING:
+            return "Ping: " + pbJson(msg.ping ? &msg.ping->base : nullptr);
+        case RTC__SIGNAL_REQUEST__MESSAGE_STATS:
+            return string("Stats: ") + (msg.stats ? msg.stats : "");
+        case RTC__SIGNAL_REQUEST__MESSAGE_BROADCAST:
+            return "Broadcast: " + pbJson(msg.broadcast ? &msg.broadcast->base : nullptr);
+        case RTC__SIGNAL_REQUEST__MESSAGE_ADDR:
+            return string("Addr: ") + (msg.addr ? msg.addr : "");
+        case RTC__SIGNAL_REQUEST__MESSAGE_SRTP_KEY:
+            return "SrtpKey: " + pbJson(msg.srtp_key ? &msg.srtp_key->base : nullptr);
+        case RTC__SIGNAL_REQUEST__MESSAGE_NODE_RTTS:
+            return "NodeRtts: " + pbJson(msg.node_rtts ? &msg.node_rtts->base : nullptr);
+        case RTC__SIGNAL_REQUEST__MESSAGE_MUTE:
+            return "Mute: " + pbJson(msg.mute ? &msg.mute->base : nullptr);
+        case RTC__SIGNAL_REQUEST__MESSAGE_ADD_STATS:
+            return "AddStats: " + pbJson(msg.add_stats ? &msg.add_stats->base : nullptr);
+        case RTC__SIGNAL_REQUEST__MESSAGE_SELECT_CHANNEL:
+            return "SelectChannel: " + pbJson(msg.select_channel ? &msg.select_channel->base : nullptr);
+        case RTC__SIGNAL_REQUEST__MESSAGE_UPLOAD:
+            return "Upload: " + pbJson(msg.upload ? &msg.upload->base : nullptr);
+        case RTC__SIGNAL_REQUEST__MESSAGE_VAD:
+            return "Vad: " + pbJson(msg.vad ? &msg.vad->base : nullptr);
+        default:
+            return "?";
+    }
 }
 
 } // anonymous namespace
@@ -512,8 +584,7 @@ public:
             response = reinterpret_cast<Rtc__SignalResponse*>(msg);
         }
         if (!response) {
-            LOGW("signal response unpack failed (binary=%d len=%zu)",
-                 binary ? 1 : 0, data.size());
+            LOGW("signal response unpack failed (binary=%d len=%zu)", binary ? 1 : 0, data.size());
             return;
         }
         if (owner) {
@@ -1338,9 +1409,14 @@ void Signal::handleReceiveSignalResponse(const Rtc__SignalResponse* signalRespon
 
     bool resetReconn = true;
     SignalListener* listener = listenerForChannel(static_cast<int>(signalResponse->channel));
+    // 对齐 ObjC：=> (id:channel): <type>: ...
+    char prefixBuf[64];
+    snprintf(prefixBuf, sizeof(prefixBuf), "=> (%u:%u):", signalResponse->id, signalResponse->channel);
+    const string prefix = prefixBuf;
 
     switch (signalResponse->message_case) {
         case RTC__SIGNAL_RESPONSE__MESSAGE_JOINED: {
+            LOGD("%s joined: %s", prefix.c_str(), pbJson(signalResponse->joined ? &signalResponse->joined->base : nullptr).c_str());
             if (!d->join_requested) {
                 d->auto_media_join = false;
             }
@@ -1351,11 +1427,13 @@ void Signal::handleReceiveSignalResponse(const Rtc__SignalResponse* signalRespon
             break;
         }
         case RTC__SIGNAL_RESPONSE__MESSAGE_CONFIG:
+            LOGD("%s config: %s", prefix.c_str(), pbJson(signalResponse->config ? &signalResponse->config->base : nullptr).c_str());
             if (listener && signalResponse->config) {
                 listener->onConfig(signalResponse->config);
             }
             break;
         case RTC__SIGNAL_RESPONSE__MESSAGE_SUBSCRIBE: {
+            LOGD("%s subscribe: %s", prefix.c_str(), pbJson(signalResponse->subscribe ? &signalResponse->subscribe->base : nullptr).c_str());
             bool audio = false;
             bool video = false;
             if (signalResponse->subscribe) {
@@ -1373,6 +1451,7 @@ void Signal::handleReceiveSignalResponse(const Rtc__SignalResponse* signalRespon
         }
         case RTC__SIGNAL_RESPONSE__MESSAGE_ADDR: {
             d->client_ip = signalResponse->addr ? signalResponse->addr : "";
+            LOGD("%s addr: %s", prefix.c_str(), d->client_ip.c_str());
             enumerateListeners([&](int, SignalListener* l) {
                 l->onChangedAddress(d->client_ip);
             });
@@ -1380,12 +1459,8 @@ void Signal::handleReceiveSignalResponse(const Rtc__SignalResponse* signalRespon
         }
         case RTC__SIGNAL_RESPONSE__MESSAGE_OFFER: {
             const auto* desc = signalResponse->offer;
-            const string plain = (desc && desc->sdp) ? desc->sdp : "";
-            span<const uint8_t> z;
-            if (desc && desc->sdp_z.len > 0 && desc->sdp_z.data) {
-                z = {desc->sdp_z.data, desc->sdp_z.len};
-            }
-            const auto sdp = Zstd::resolveSdp(plain, z);
+            const auto sdp = resolveDescSdp(desc);
+            LOGD("%s offer: %s", prefix.c_str(), sdp.c_str());
             if (sdp.empty()) {
                 ERROR("offer sdp empty after resolve");
                 break;
@@ -1402,15 +1477,11 @@ void Signal::handleReceiveSignalResponse(const Rtc__SignalResponse* signalRespon
         }
         case RTC__SIGNAL_RESPONSE__MESSAGE_ANSWER: {
             const auto* desc = signalResponse->answer;
+            const auto sdp = resolveDescSdp(desc);
+            LOGD("%s answer: %s", prefix.c_str(), sdp.c_str());
             if (!listener || !desc) {
                 break;
             }
-            const string plain = desc->sdp ? desc->sdp : "";
-            span<const uint8_t> z;
-            if (desc->sdp_z.len > 0 && desc->sdp_z.data) {
-                z = {desc->sdp_z.data, desc->sdp_z.len};
-            }
-            const auto sdp = Zstd::resolveSdp(plain, z);
             if (!sdp.empty()) {
                 listener->onAnswer(sdp);
             } else {
@@ -1419,6 +1490,7 @@ void Signal::handleReceiveSignalResponse(const Rtc__SignalResponse* signalRespon
             break;
         }
         case RTC__SIGNAL_RESPONSE__MESSAGE_CANDIDATE: {
+            LOGD("%s candidate: %s", prefix.c_str(), signalResponse->candidate ? signalResponse->candidate : "");
             if (listener && signalResponse->candidate) {
                 IceCandidate c;
                 if (parseIceCandidateJson(signalResponse->candidate, &c)) {
@@ -1428,6 +1500,7 @@ void Signal::handleReceiveSignalResponse(const Rtc__SignalResponse* signalRespon
             break;
         }
         case RTC__SIGNAL_RESPONSE__MESSAGE_NODE_LIST: {
+            LOGD("%s nodeList: %s", prefix.c_str(), pbJson(signalResponse->node_list ? &signalResponse->node_list->base : nullptr).c_str());
             if (signalResponse->node_list) {
                 std::vector<std::string> nodes;
                 nodes.reserve(signalResponse->node_list->n_ips);
@@ -1457,6 +1530,7 @@ void Signal::handleReceiveSignalResponse(const Rtc__SignalResponse* signalRespon
             }
             break;
         case RTC__SIGNAL_RESPONSE__MESSAGE_ADD_TRACK:
+            LOGD("%s addTrack: %s", prefix.c_str(), pbJson(signalResponse->add_track ? &signalResponse->add_track->base : nullptr).c_str());
             if (listener && signalResponse->add_track) {
                 listener->onAddTrack(signalResponse->add_track);
                 for (size_t i = 0; i < signalResponse->add_track->n_tracks; ++i) {
@@ -1468,21 +1542,28 @@ void Signal::handleReceiveSignalResponse(const Rtc__SignalResponse* signalRespon
             }
             break;
         case RTC__SIGNAL_RESPONSE__MESSAGE_REMOVE_TRACK:
+            LOGD("%s removeTrack: %s", prefix.c_str(), pbJson(signalResponse->remove_track ? &signalResponse->remove_track->base : nullptr).c_str());
             if (listener && signalResponse->remove_track) {
                 listener->onRemoveTracks(signalResponse->remove_track);
             }
             break;
         case RTC__SIGNAL_RESPONSE__MESSAGE_LEAVED:
+            LOGD("%s leaved: %s", prefix.c_str(), pbJson(signalResponse->leaved ? &signalResponse->leaved->base : nullptr).c_str());
             if (listener && signalResponse->leaved) {
                 listener->onLeaved(signalResponse->leaved);
             }
             break;
         case RTC__SIGNAL_RESPONSE__MESSAGE_STATE:
+            LOGD("%s state: %d", prefix.c_str(), static_cast<int>(signalResponse->state));
             if (listener) {
                 listener->onChangedPeerState(signalResponse->state);
             }
             break;
+        case RTC__SIGNAL_RESPONSE__MESSAGE_STATS:
+            LOGD("%s stats: %s", prefix.c_str(), signalResponse->stats ? signalResponse->stats : "");
+            break;
         case RTC__SIGNAL_RESPONSE__MESSAGE_RESPONSE:
+            LOGD("%s response: %s", prefix.c_str(), pbJson(signalResponse->response ? &signalResponse->response->base : nullptr).c_str());
             if (signalResponse->response) {
                 d->last_code = static_cast<int>(signalResponse->response->code);
                 if (d->last_code != 200) {
@@ -1513,12 +1594,17 @@ void Signal::handleReceiveSignalResponse(const Rtc__SignalResponse* signalRespon
                 }
             }
             break;
+        case RTC__SIGNAL_RESPONSE__MESSAGE_BROADCAST:
+            LOGD("%s broadcast: %s", prefix.c_str(), pbJson(signalResponse->broadcast ? &signalResponse->broadcast->base : nullptr).c_str());
+            break;
         case RTC__SIGNAL_RESPONSE__MESSAGE_NEGOTIATION:
+            LOGD("%s negotiation: %d", prefix.c_str(), signalResponse->negotiation != 0);
             if (listener) {
                 listener->onNegotiation(signalResponse->negotiation != 0);
             }
             break;
         case RTC__SIGNAL_RESPONSE__MESSAGE_TOKEN:
+            LOGD("%s token: %s", prefix.c_str(), signalResponse->token ? signalResponse->token : "");
             // Match ObjC: store token and push to HTTP client for subsequent requests.
             d->token = signalResponse->token ? signalResponse->token : "";
             HttpClient::setAuthToken(d->token);
@@ -1530,13 +1616,14 @@ void Signal::handleReceiveSignalResponse(const Rtc__SignalResponse* signalRespon
                 break;
             }
             const auto& bin = compression->zstd_dict;
+            LOGD("%s compression: len=%zu", prefix.c_str(), bin.len);
             span<const uint8_t> dict{reinterpret_cast<const uint8_t*>(bin.data), bin.len};
             if (Zstd::shared().setDict(dict)) {
                 const auto md5 = Zstd::shared().dictMd5();
                 Zstd::shared().saveCachedDict();
-                INFO("compression dict set, size=%zu md5=%s", bin.len, md5.c_str());
+                INFO("%s compression dict set, size=%zu md5=%s", prefix.c_str(), bin.len, md5.c_str());
             } else {
-                ERROR("compression dict rejected, size=%zu", bin.len);
+                ERROR("%s compression dict rejected, size=%zu", prefix.c_str(), bin.len);
             }
             break;
         }
@@ -1609,6 +1696,11 @@ void Signal::enumerateListeners(const std::function<void(int channel, SignalList
 bool Signal::sendRequest(Rtc__SignalRequest& req, bool important) {
     if (req.id == 0) {
         req.id = d->msg_id.fetch_add(1);
+    }
+
+    // 对齐 ObjC：非 ping 请求打印摘要；offer/answer 为未压缩 SDP
+    if (req.message_case != RTC__SIGNAL_REQUEST__MESSAGE_PING) {
+        LOGD("<= (%u:%u): %s", req.id, req.channel, signalRequestToString(req).c_str());
     }
 
     bool ok = false;
