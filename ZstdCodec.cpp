@@ -52,8 +52,21 @@ bool Zstd::startsWith(span<const uint8_t> data, span<const uint8_t> magic) noexc
 }
 
 string Zstd::md5Hex(span<const uint8_t> data) {
+    // 对齐 Zstd.ts：Md5.hashStr(String.fromCharCode(...bytes))
+    // 先把每个字节当作 U+00XX，再 UTF-8 编码后做 MD5（≥0x80 会扩成两字节）。
+    vector<uint8_t> utf8;
+    utf8.reserve(data.size() * 2);
+    for (uint8_t b : data) {
+        if (b < 0x80) {
+            utf8.push_back(b);
+        } else {
+            utf8.push_back(static_cast<uint8_t>(0xc0 | (b >> 6)));
+            utf8.push_back(static_cast<uint8_t>(0x80 | (b & 0x3f)));
+        }
+    }
+
     array<uint8_t, MD5_DIGEST_LENGTH> digest{};
-    MD5(data.data(), data.size(), digest.data());
+    MD5(utf8.data(), utf8.size(), digest.data());
     string out;
     out.resize(MD5_DIGEST_LENGTH * 2);
     for (size_t i = 0; i < MD5_DIGEST_LENGTH; ++i) {
