@@ -40,6 +40,7 @@ JSPPRTC_JNI_S(void,
               jobjectArray hostValues,
               jboolean sni,
               jboolean http3,
+              jboolean compression,
               jint icePolicy,
               jstring server,
               jlong serverRecheck,
@@ -81,6 +82,7 @@ JSPPRTC_JNI_S(void,
 
     c.sni = sni == JNI_TRUE;
     c.http3 = http3 == JNI_TRUE;
+    c.compression = compression == JNI_TRUE;
     c.icePolicy = static_cast<bff::RtcIcePolicy>(icePolicy);
 
     const std::string serverStr = jmi::to_string(server, env);
