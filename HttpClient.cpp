@@ -4,6 +4,7 @@
 #include "Cert.h"
 #include "FileLogger.hpp"
 #include "SniUrl.h"
+#include "ZstdCodec.hpp"
 #include "defs.h"
 #include "Log.hpp"
 #define TAG "curl.http"
@@ -14,6 +15,8 @@
 #include <filesystem>
 #include <chrono>
 #include <ctime>
+#include <cstring>
+#include <memory>
 #include <mutex>
 #include <unordered_set>
 #include <vector>
@@ -28,6 +31,44 @@ namespace {
 
 std::mutex g_auth_token_mtx;
 std::string g_auth_token;
+
+string gzip(const string& data)
+{
+    if (data.empty())
+        return {};
+    z_stream stream;
+    memset(&stream, 0, sizeof(stream));
+    if (deflateInit2(&stream, Z_DEFAULT_COMPRESSION, Z_DEFLATED, 15 + 16, 8, Z_DEFAULT_STRATEGY) != Z_OK)
+        return {};
+    string output;
+    auto capacity = deflateBound(&stream, data.size());
+    output.reserve(capacity);
+    output.resize(capacity);
+    stream.next_in  = (Bytef *)data.data();
+    stream.avail_in = (uInt)data.size();
+    stream.next_out  = (Bytef *)output.data();
+    stream.avail_out = (uInt)capacity;
+    if (deflate(&stream, Z_FINISH) != Z_STREAM_END) {
+        deflateEnd(&stream);
+        return {};
+    }
+    output.resize(stream.total_out);
+    deflateEnd(&stream);
+    return output;
+}
+
+// HTTP 上传不用字典，对齐 JS Zstd.encode(text, false)
+string zstdCompress(const string& data)
+{
+    if (data.empty()) {
+        return {};
+    }
+    auto out = bff::Zstd::shared().encode(data, /*useDict=*/false);
+    if (out.empty()) {
+        return {};
+    }
+    return string(reinterpret_cast<const char*>(out.data()), out.size());
+}
 
 // Replace existing token= query value; leave URL unchanged if no token= present.
 std::string replaceTokenQuery(const std::string& url, const std::string& token) {
@@ -206,42 +247,63 @@ void HttpClient::post(const std::string& url, std::string&& body, CompletionCall
     }, std::move(cb));
 }
 
-string gzip(const string& data)
-{
-    if (data.empty())
-        return {};
-    z_stream stream;
-    memset(&stream, 0, sizeof(stream));
-    if (deflateInit2(&stream, Z_DEFAULT_COMPRESSION, Z_DEFLATED, 15 + 16, 8, Z_DEFAULT_STRATEGY) != Z_OK)
-        return {};
-    string output;
-    auto capacity = deflateBound(&stream, data.size());
-    output.reserve(capacity);
-    output.resize(capacity);
-    stream.next_in  = (Bytef *)data.data();
-    stream.avail_in = (uInt)data.size();
-    stream.next_out  = (Bytef *)output.data();
-    stream.avail_out = (uInt)capacity;
-    if (deflate(&stream, Z_FINISH) != Z_STREAM_END) {
-        deflateEnd(&stream);
-        return {};
-    }
-    output.resize(stream.total_out);
-    deflateEnd(&stream);
-    return output;
-}
-
 void HttpClient::postGz(const std::string& url, std::string&& uncompressedBody, CompletionCallback&& cb)
 {
-    auto data = gzip(uncompressedBody);
-    if (data.empty()) {
-        if (cb) {
-            cb({.httpCode = 0, .bytesSent = 0, .responseBody = {}, .error = "gzip failed", .curlCode = 0});
+    postWithCompression("gzip", url, std::move(uncompressedBody), std::move(cb));
+}
+
+void HttpClient::postZstd(const std::string& url, std::string&& uncompressedBody, CompletionCallback&& cb)
+{
+    postWithCompression("zstd", url, std::move(uncompressedBody), std::move(cb));
+}
+
+int HttpClient::postWithCompression(const std::string& encoding,
+                                    const std::string& url,
+                                    std::string&& uncompressedBody,
+                                    CompletionCallback&& cb)
+{
+    const auto uncompressedSize = uncompressedBody.size();
+    auto finishWithBody = [&](string&& body, bool setEncoding) -> int {
+        const auto uploadedSize = static_cast<int>(body.size());
+        if (setEncoding) {
+            header("Content-Encoding", encoding);
         }
-        return;
+        post(url, std::move(body), std::move(cb));
+        return uploadedSize;
+    };
+
+    if (encoding.empty()) {
+        return finishWithBody(std::move(uncompressedBody), /*setEncoding=*/false);
     }
-    header("Content-Encoding", "gzip");
-    post(url, std::move(data), std::move(cb));
+
+    string data;
+    if (encoding == "gzip") {
+        data = gzip(uncompressedBody);
+    } else if (encoding == "zstd") {
+        data = zstdCompress(uncompressedBody);
+    } else {
+        if (cb) {
+            cb({.httpCode = 0, .bytesSent = 0, .responseBody = {}, .error = "unsupported Content-Encoding", .curlCode = 0});
+        }
+        return 0;
+    }
+
+    if (data.empty()) {
+        if (uncompressedBody.empty()) {
+            if (cb) {
+                cb({.httpCode = 0,
+                    .bytesSent = 0,
+                    .responseBody = {},
+                    .error = encoding + " failed",
+                    .curlCode = 0});
+            }
+            return 0;
+        }
+        WARN("%s failed, fallback uncompressed size=%zu", encoding.c_str(), uncompressedSize);
+        return finishWithBody(std::move(uncompressedBody), /*setEncoding=*/false);
+    }
+
+    return finishWithBody(std::move(data), /*setEncoding=*/true);
 }
 
 void HttpClient::request(const std::string& url, const std::string& method, std::string&& body, CompletionCallback&& cb)
@@ -315,6 +377,24 @@ void HttpClient::postGz(const std::string& url, std::string&& uncompressedBody, 
     if (cb) {
         cb({.httpCode = 0, .bytesSent = 0, .responseBody = {}, .error = "not implemented", .curlCode = 0});
     }
+}
+
+void HttpClient::postZstd(const std::string& url, std::string&& uncompressedBody, CompletionCallback&& cb)
+{
+    if (cb) {
+        cb({.httpCode = 0, .bytesSent = 0, .responseBody = {}, .error = "not implemented", .curlCode = 0});
+    }
+}
+
+int HttpClient::postWithCompression(const std::string& encoding,
+                                    const std::string& url,
+                                    std::string&& uncompressedBody,
+                                    CompletionCallback&& cb)
+{
+    if (cb) {
+        cb({.httpCode = 0, .bytesSent = 0, .responseBody = {}, .error = "not implemented", .curlCode = 0});
+    }
+    return 0;
 }
 
 void HttpClient::request(const std::string& url, const std::string& method, std::string&& body, CompletionCallback&& cb)
@@ -680,22 +760,18 @@ void uploadLog(const std::string& uploadUrl,
         client.sni(sni);
     }
 
-#ifdef LIBCURL_VERSION_MAJOR
-    auto compressed = gzip(payload);
-#else
-    std::string compressed;
-#endif
+    const string encoding = Config::Shared().compression ? "zstd" : "gzip";
     const auto payloadSize = payload.size();
-    auto onComplete = [cb = std::move(cb), payloadSize, name = encodedName](const HttpClient::Result& r) {
+    auto onComplete = [cb = std::move(cb), payloadSize, name = encodedName, encoding](const HttpClient::Result& r) {
         if (r.curlCode && !r.error.empty()) {
-            WARN("uploadLog error after sending %d/%zu bytes, code=%d name=%s: %s", r.bytesSent, payloadSize,
-                 r.httpCode, name.c_str(), r.error.c_str());
+            WARN("uploadLog error after sending %d/%zu bytes, code=%d name=%s encoding=%s: %s", r.bytesSent, payloadSize,
+                 r.httpCode, name.c_str(), encoding.c_str(), r.error.c_str());
         } else if (r.httpCode != 200) {
-            WARN("uploadLog failed after sending %d/%zu bytes, response code: %d name=%s", r.bytesSent,
-                 payloadSize, r.httpCode, name.c_str());
+            WARN("uploadLog failed after sending %d/%zu bytes, response code: %d name=%s encoding=%s", r.bytesSent,
+                 payloadSize, r.httpCode, name.c_str(), encoding.c_str());
         } else {
-            INFO("uploadLog done, sent %d/%zu bytes, response: %s name=%s", r.bytesSent, payloadSize,
-                 r.responseBody.c_str(), name.c_str());
+            INFO("uploadLog done, sent %d/%zu bytes, response: %s name=%s encoding=%s",
+                 r.bytesSent, payloadSize, r.responseBody.c_str(), name.c_str(), encoding.c_str());
             if (r.responseBody.find("\"error\"") != std::string::npos) {
                 WARN("uploadLog response contains error name=%s", name.c_str());
             }
@@ -705,17 +781,11 @@ void uploadLog(const std::string& uploadUrl,
         }
     };
 
-    if (!compressed.empty()) {
-        INFO("uploadLog gzip %zu => %zu name=%s", payloadSize, compressed.size(), encodedName.c_str());
-        client.header("Content-Encoding", "gzip");
-        client.post(url, std::move(compressed), std::move(onComplete));
-    } else {
-        if (!payload.empty()) {
-            WARN("uploadLog gzip failed, fallback uncompressed size=%zu name=%s", payloadSize,
-                 encodedName.c_str());
-        }
-        client.post(url, std::move(payload), std::move(onComplete));
-    }
+    const int uploadedSize = client.postWithCompression(encoding, url, std::move(payload), std::move(onComplete));
+    const int ratioPercent = payloadSize > 0
+        ? static_cast<int>((static_cast<long long>(uploadedSize) * 100) / static_cast<long long>(payloadSize))
+        : 0;
+    INFO("uploadLog %s %zu => %d (%d%%) name=%s", encoding.c_str(), payloadSize, uploadedSize, ratioPercent, encodedName.c_str());
 }
 
 void uploadAllLogs(const std::string& uploadUrl, std::function<void(const UploadAllLogsResult&)> cb)

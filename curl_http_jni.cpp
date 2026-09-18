@@ -49,6 +49,36 @@ jobject makeUploadAllLogsResult(JNIEnv *env, const bff::UploadAllLogsResult &res
     return ret;
 }
 
+std::string jbyteArrayToString(JNIEnv *env, jbyteArray body) {
+    std::string body_text;
+    if (!body) {
+        return body_text;
+    }
+    const jsize len = env->GetArrayLength(body);
+    body_text.resize(static_cast<size_t>(len));
+    if (len > 0) {
+        env->GetByteArrayRegion(body, 0, len, reinterpret_cast<jbyte *>(body_text.data()));
+    }
+    return body_text;
+}
+
+template <typename Start>
+HttpClient::Result awaitHttp(Start&& start) {
+    HttpClient::Result result;
+    std::mutex mtx;
+    std::condition_variable cv;
+    bool done = false;
+    start([&](const HttpClient::Result &r) {
+        result = r;
+        std::lock_guard<std::mutex> lock(mtx);
+        done = true;
+        cv.notify_one();
+    });
+    std::unique_lock<std::mutex> lock(mtx);
+    cv.wait(lock, [&] { return done; });
+    return result;
+}
+
 } // namespace
 
 extern "C" {
@@ -85,33 +115,27 @@ CURLHTTP_JNI(jobject, nativeRequest, jlong handle, jstring url, jstring method, 
 
     const std::string url_text = jmi::to_string(url, env);
     const std::string method_text = jmi::to_string(method, env);
-    std::string body_text;
-    if (body) {
-        const jsize len = env->GetArrayLength(body);
-        body_text.resize(static_cast<size_t>(len));
-        if (len > 0) {
-            env->GetByteArrayRegion(body, 0, len, reinterpret_cast<jbyte *>(body_text.data()));
-        }
+    std::string body_text = jbyteArrayToString(env, body);
+
+    const auto result = awaitHttp([&](HttpClient::CompletionCallback&& cb) {
+        native->client->request(url_text, method_text, std::move(body_text), std::move(cb));
+    });
+    return makeResult(env, result);
+}
+
+CURLHTTP_JNI(jobject, nativePostWithCompression, jlong handle, jstring encoding, jstring url, jbyteArray body) {
+    auto *native = fromHandle(handle);
+    if (!native || !native->client) {
+        return nullptr;
     }
 
-    HttpClient::Result result;
-    std::mutex mtx;
-    std::condition_variable cv;
-    bool done = false;
+    const std::string encoding_text = encoding ? jmi::to_string(encoding, env) : std::string{};
+    const std::string url_text = jmi::to_string(url, env);
+    std::string body_text = jbyteArrayToString(env, body);
 
-    native->client->request(url_text, method_text, std::move(body_text),
-                            [&](const HttpClient::Result &r) {
-                                result = r;
-                                std::lock_guard<std::mutex> lock(mtx);
-                                done = true;
-                                cv.notify_one();
-                            });
-
-    {
-        std::unique_lock<std::mutex> lock(mtx);
-        cv.wait(lock, [&] { return done; });
-    }
-
+    const auto result = awaitHttp([&](HttpClient::CompletionCallback&& cb) {
+        native->client->postWithCompression(encoding_text, url_text, std::move(body_text), std::move(cb));
+    });
     return makeResult(env, result);
 }
 
@@ -124,22 +148,9 @@ CURLHTTP_JNI(jboolean, nativeIsSecError, jint curlCode) {
 // Returns response body on HTTP 200; nullptr otherwise (matches HttpHelper.generateToken).
 CURLHTTP_JNI(jstring, nativeGenerateToken, jstring url) {
     const std::string url_text = jmi::to_string(url, env);
-    HttpClient::Result result;
-    std::mutex mtx;
-    std::condition_variable cv;
-    bool done = false;
-
-    bff::generateToken(url_text, [&](const HttpClient::Result& r) {
-        result = r;
-        std::lock_guard<std::mutex> lock(mtx);
-        done = true;
-        cv.notify_one();
+    const auto result = awaitHttp([&](HttpClient::CompletionCallback&& cb) {
+        bff::generateToken(url_text, std::move(cb));
     });
-
-    {
-        std::unique_lock<std::mutex> lock(mtx);
-        cv.wait(lock, [&] { return done; });
-    }
 
     if (result.httpCode != 200 || result.responseBody.empty()) {
         if (!result.error.empty()) {
