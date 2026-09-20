@@ -165,6 +165,9 @@ public:
     void report(const Rtc__Stats* stats, int64_t startTimeSinceEpoch) override {
         signal_->report(stats, startTimeSinceEpoch, channel_);
     }
+    void upload(const std::string& filename, std::span<const uint8_t> content) override {
+        signal_->upload(filename, content, channel_);
+    }
 
 private:
     std::shared_ptr<Signal> signal_;

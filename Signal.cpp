@@ -207,8 +207,12 @@ static string signalRequestToString(const Rtc__SignalRequest& msg) {
             return "AddStats: " + pbJson(msg.add_stats ? &msg.add_stats->base : nullptr);
         case RTC__SIGNAL_REQUEST__MESSAGE_SELECT_CHANNEL:
             return "SelectChannel: " + pbJson(msg.select_channel ? &msg.select_channel->base : nullptr);
-        case RTC__SIGNAL_REQUEST__MESSAGE_UPLOAD:
-            return "Upload: " + pbJson(msg.upload ? &msg.upload->base : nullptr);
+        case RTC__SIGNAL_REQUEST__MESSAGE_UPLOAD: {
+            const auto* u = msg.upload;
+            const char* name = (u && u->filename) ? u->filename : "";
+            const size_t n = (u && u->content.data) ? u->content.len : 0;
+            return string("Upload: filename=") + name + " content=" + std::to_string(n);
+        }
         case RTC__SIGNAL_REQUEST__MESSAGE_VAD:
             return "Vad: " + pbJson(msg.vad ? &msg.vad->base : nullptr);
         default:
@@ -1400,6 +1404,20 @@ void Signal::report(const Rtc__Stats* stats, int64_t /*startTimeSinceEpoch*/, in
     req.channel = static_cast<uint32_t>(channel);
     req.message_case = RTC__SIGNAL_REQUEST__MESSAGE_ADD_STATS;
     req.add_stats = const_cast<Rtc__Stats*>(stats);
+    sendRequest(req);
+}
+
+void Signal::upload(const std::string& filename, span<const uint8_t> content, int channel) {
+    Rtc__Upload upload = RTC__UPLOAD__INIT;
+    upload.filename = const_cast<char*>(filename.c_str());
+    if (!content.empty()) {
+        upload.content = {.len = content.size(), .data = const_cast<uint8_t*>(content.data())};
+    }
+
+    Rtc__SignalRequest req = RTC__SIGNAL_REQUEST__INIT;
+    req.channel = static_cast<uint32_t>(channel);
+    req.message_case = RTC__SIGNAL_REQUEST__MESSAGE_UPLOAD;
+    req.upload = &upload;
     sendRequest(req);
 }
 

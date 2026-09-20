@@ -2,6 +2,7 @@
 
 #include <functional>
 #include <memory>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -82,6 +83,8 @@ public:
     void selectChannel(int select, int channel);
     // TODO: use protobuf binary
     void report(const Rtc__Stats* stats, int64_t startTimeSinceEpoch, int channel);
+    // 经信令上传文件（如日志）；content 可为已压缩字节，channel 默认 0（对齐 JS）
+    void upload(const std::string& filename, std::span<const uint8_t> content, int channel = 0);
 
     // Receiver-side APIs.
     void handleReceiveSignalResponse(const Rtc__SignalResponse* signalResponse);
