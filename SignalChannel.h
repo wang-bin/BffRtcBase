@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <span>
 #include <string>
 #include <unordered_set>
 #include <utility>
@@ -66,6 +67,7 @@ public:
     virtual void mute(bool on, uint32_t rtpTime, bool video) = 0;
     virtual void selectChannel(int select) = 0;
     virtual void report(const Rtc__Stats* stats, int64_t startTimeSinceEpoch) = 0;
+    virtual void upload(const std::string& filename, std::span<const uint8_t> content) = 0;
 };
 
 using SignalChannelPtr = std::shared_ptr<SignalChannel>;
