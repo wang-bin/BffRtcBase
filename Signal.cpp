@@ -444,13 +444,21 @@ public:
     void onTransportOpen(Leg leg) {
         bool discard_alt = false;
         bool racing = false;
+        bool already_closing = false;
         {
             std::lock_guard lock(race_mtx);
             if (!isCandidate(leg)) {
                 LOGW("ignore non-candidate open");
                 return;
             }
-            if (session_open && isAlt(leg)) {
+            // disconnect 已发起时，迟到的握手完成仍会回调；必须 abort，避免通话结束后仍 join。
+            if (user_closed.load()) {
+                already_closing = true;
+                if (isAlt(leg)) {
+                    has_alt = false;
+                }
+                session_open = false;
+            } else if (session_open && isAlt(leg)) {
                 has_alt = false;
                 discard_alt = true;
             } else {
@@ -460,6 +468,11 @@ public:
                     cancelMixedDelayOnly();
                 }
             }
+        }
+        if (already_closing) {
+            LOGW("ignore onOpen: already closing");
+            closeLoserAsync(leg);
+            return;
         }
         if (discard_alt) {
             websocket.closeAsync();
