@@ -13,9 +13,9 @@ class SignalListener {
 public:
     virtual ~SignalListener() = default;
 
-    virtual void onOffer(const std::string& sdp) {}
-    virtual void onAnswer(const std::string& sdp) {}
-    virtual void onCandidate(const IceCandidate& candidate) {}
+    virtual void onOffer(const std::string& from, const std::string& sdp) {}
+    virtual void onAnswer(const std::string& from, const std::string& sdp) {}
+    virtual void onCandidate(const std::string& from, const IceCandidate& candidate) {}
 
     // AddTrack: batch then per-track (same order as receiveAddTrackSignalWithSignalResponse).
     virtual void onAddTrack(const Rtc__AddTrack* addTrack) {}
@@ -28,9 +28,9 @@ public:
     virtual void onSubscribe(bool audio, bool video) {}
 
     virtual void onChangedAddress(const std::string& addr) {}
-    virtual void onChangedPeerState(Rtc__PeerState peerState) {}
+    virtual void onChangedPeerState(const std::string& from, Rtc__PeerState peerState) {}
     virtual void onLeaved(const Rtc__Leaved* leaved) {}
-    virtual void onNegotiation(bool iceRestart) {}
+    virtual void onNegotiation(const std::string& from, bool iceRestart) {}
 
     virtual void onLog(const std::string& message, RtcLogLevel level, const std::string& component) {}
     virtual void onError(RtcError error) {}

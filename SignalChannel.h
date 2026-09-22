@@ -58,11 +58,11 @@ public:
     virtual void join() = 0;
     virtual void srtpKey(const std::string& key, Rtc__SrtpProfile profile) = 0;
     virtual void recreate() = 0;
-    virtual void offer(const std::string& sdp) = 0;
-    virtual void answer(const std::string& sdp) = 0;
-    virtual void negotiation(bool negotiation) = 0;
+    virtual void offer(const std::string& sdp, const std::string& to = {}) = 0;
+    virtual void answer(const std::string& sdp, const std::string& to = {}) = 0;
+    virtual void negotiation(bool negotiation, const std::string& to = {}) = 0;
     virtual void subscribe(bool audio, bool video) = 0;
-    virtual void candidate(const std::string& candidate) = 0;
+    virtual void candidate(const std::string& candidate, const std::string& to = {}) = 0;
     virtual void nodeRtts(const std::vector<std::pair<std::string, int>>& rtts) = 0;
     virtual void mute(bool on, uint32_t rtpTime, bool video) = 0;
     virtual void selectChannel(int select) = 0;

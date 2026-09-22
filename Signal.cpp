@@ -1273,7 +1273,7 @@ void Signal::recreate(int channel) {
     sendRequest(req);
 }
 
-void Signal::offer(const std::string& sdp, int channel) {
+void Signal::offer(const std::string& sdp, int channel, const std::string& to) {
     Rtc__SessionDescription offer = RTC__SESSION_DESCRIPTION__INIT;
     offer.type = RTC__SDP_TYPE__SDP_TYPE_OFFER;
     vector<uint8_t> sdp_z;
@@ -1293,13 +1293,14 @@ void Signal::offer(const std::string& sdp, int channel) {
 
     Rtc__SignalRequest req = RTC__SIGNAL_REQUEST__INIT;
     req.channel = static_cast<uint32_t>(channel);
+    req.to = const_cast<char*>(to.c_str());
     req.message_case = RTC__SIGNAL_REQUEST__MESSAGE_OFFER;
     req.offer = &offer;
     // Mesh publish/subscribe may offer before the peer has joined (814 no selected node).
     sendRequest(req);
 }
 
-void Signal::answer(const std::string& sdp, int channel) {
+void Signal::answer(const std::string& sdp, int channel, const std::string& to) {
     Rtc__SessionDescription answer = RTC__SESSION_DESCRIPTION__INIT;
     answer.type = RTC__SDP_TYPE__SDP_TYPE_ANSWER;
     vector<uint8_t> sdp_z;
@@ -1318,14 +1319,16 @@ void Signal::answer(const std::string& sdp, int channel) {
 
     Rtc__SignalRequest req = RTC__SIGNAL_REQUEST__INIT;
     req.channel = static_cast<uint32_t>(channel);
+    req.to = const_cast<char*>(to.c_str());
     req.message_case = RTC__SIGNAL_REQUEST__MESSAGE_ANSWER;
     req.answer = &answer;
     sendRequest(req, true);
 }
 
-void Signal::negotiation(bool negotiation, int channel) {
+void Signal::negotiation(bool negotiation, int channel, const std::string& to) {
     Rtc__SignalRequest req = RTC__SIGNAL_REQUEST__INIT;
     req.channel = static_cast<uint32_t>(channel);
+    req.to = const_cast<char*>(to.c_str());
     req.message_case = RTC__SIGNAL_REQUEST__MESSAGE_NEGOTIATION;
     req.negotiation = negotiation ? 1 : 0;
     requestOrAgain(req);
@@ -1349,9 +1352,10 @@ void Signal::subscribe(bool audio, bool video, int channel) {
     d->subscribing = audio || video;
 }
 
-void Signal::candidate(const std::string& candidate, int channel) {
+void Signal::candidate(const std::string& candidate, int channel, const std::string& to) {
     Rtc__SignalRequest req = RTC__SIGNAL_REQUEST__INIT;
     req.channel = static_cast<uint32_t>(channel);
+    req.to = const_cast<char*>(to.c_str());
     req.message_case = RTC__SIGNAL_REQUEST__MESSAGE_CANDIDATE;
     req.candidate = const_cast<char*>(candidate.c_str());
     sendRequest(req);
@@ -1491,7 +1495,8 @@ void Signal::handleReceiveSignalResponse(const Rtc__SignalResponse* signalRespon
         case RTC__SIGNAL_RESPONSE__MESSAGE_OFFER: {
             const auto* desc = signalResponse->offer;
             const auto sdp = resolveDescSdp(desc);
-            LOGD("%s offer: %s", prefix.c_str(), sdp.c_str());
+            const std::string from = signalResponse->from ? signalResponse->from : "";
+            LOGD("%s offer from=%s: %s", prefix.c_str(), from.c_str(), sdp.c_str());
             if (sdp.empty()) {
                 ERROR("offer sdp empty after resolve");
                 break;
@@ -1500,7 +1505,7 @@ void Signal::handleReceiveSignalResponse(const Rtc__SignalResponse* signalRespon
                 LOGW("offer sdp not changed, ignore");
             } else {
                 if (listener) {
-                    listener->onOffer(sdp);
+                    listener->onOffer(from, sdp);
                 }
                 d->last_offer = sdp;
             }
@@ -1509,23 +1514,26 @@ void Signal::handleReceiveSignalResponse(const Rtc__SignalResponse* signalRespon
         case RTC__SIGNAL_RESPONSE__MESSAGE_ANSWER: {
             const auto* desc = signalResponse->answer;
             const auto sdp = resolveDescSdp(desc);
-            LOGD("%s answer: %s", prefix.c_str(), sdp.c_str());
+            const std::string from = signalResponse->from ? signalResponse->from : "";
+            LOGD("%s answer from=%s: %s", prefix.c_str(), from.c_str(), sdp.c_str());
             if (!listener || !desc) {
                 break;
             }
             if (!sdp.empty()) {
-                listener->onAnswer(sdp);
+                listener->onAnswer(from, sdp);
             } else {
                 ERROR("answer sdp empty after resolve");
             }
             break;
         }
         case RTC__SIGNAL_RESPONSE__MESSAGE_CANDIDATE: {
-            LOGD("%s candidate: %s", prefix.c_str(), signalResponse->candidate ? signalResponse->candidate : "");
+            const std::string from = signalResponse->from ? signalResponse->from : "";
+            LOGD("%s candidate from=%s: %s", prefix.c_str(), from.c_str(),
+                 signalResponse->candidate ? signalResponse->candidate : "");
             if (listener && signalResponse->candidate) {
                 IceCandidate c;
                 if (parseIceCandidateJson(signalResponse->candidate, &c)) {
-                    listener->onCandidate(c);
+                    listener->onCandidate(from, c);
                 }
             }
             break;
@@ -1584,12 +1592,14 @@ void Signal::handleReceiveSignalResponse(const Rtc__SignalResponse* signalRespon
                 listener->onLeaved(signalResponse->leaved);
             }
             break;
-        case RTC__SIGNAL_RESPONSE__MESSAGE_STATE:
-            LOGD("%s state: %d", prefix.c_str(), static_cast<int>(signalResponse->state));
+        case RTC__SIGNAL_RESPONSE__MESSAGE_STATE: {
+            const std::string from = signalResponse->from ? signalResponse->from : "";
+            LOGD("%s state from=%s: %d", prefix.c_str(), from.c_str(), static_cast<int>(signalResponse->state));
             if (listener) {
-                listener->onChangedPeerState(signalResponse->state);
+                listener->onChangedPeerState(from, signalResponse->state);
             }
             break;
+        }
         case RTC__SIGNAL_RESPONSE__MESSAGE_STATS:
             LOGD("%s stats: %s", prefix.c_str(), signalResponse->stats ? signalResponse->stats : "");
             break;
@@ -1628,12 +1638,14 @@ void Signal::handleReceiveSignalResponse(const Rtc__SignalResponse* signalRespon
         case RTC__SIGNAL_RESPONSE__MESSAGE_BROADCAST:
             LOGD("%s broadcast: %s", prefix.c_str(), pbJson(signalResponse->broadcast ? &signalResponse->broadcast->base : nullptr).c_str());
             break;
-        case RTC__SIGNAL_RESPONSE__MESSAGE_NEGOTIATION:
-            LOGD("%s negotiation: %d", prefix.c_str(), signalResponse->negotiation != 0);
+        case RTC__SIGNAL_RESPONSE__MESSAGE_NEGOTIATION: {
+            const std::string from = signalResponse->from ? signalResponse->from : "";
+            LOGD("%s negotiation from=%s: %d", prefix.c_str(), from.c_str(), signalResponse->negotiation != 0);
             if (listener) {
-                listener->onNegotiation(signalResponse->negotiation != 0);
+                listener->onNegotiation(from, signalResponse->negotiation != 0);
             }
             break;
+        }
         case RTC__SIGNAL_RESPONSE__MESSAGE_TOKEN:
             LOGD("%s token: %s", prefix.c_str(), signalResponse->token ? signalResponse->token : "");
             // Match ObjC: store token and push to HTTP client for subsequent requests.

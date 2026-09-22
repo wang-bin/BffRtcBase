@@ -154,11 +154,15 @@ public:
 
     void srtpKey(const std::string& key, Rtc__SrtpProfile profile) override { signal_->srtpKey(key, profile, channel_); }
     void recreate() override { signal_->recreate(channel_); }
-    void offer(const std::string& sdp) override { signal_->offer(sdp, channel_); }
-    void answer(const std::string& sdp) override { signal_->answer(sdp, channel_); }
-    void negotiation(bool negotiation) override { signal_->negotiation(negotiation, channel_); }
+    void offer(const std::string& sdp, const std::string& to = {}) override { signal_->offer(sdp, channel_, to); }
+    void answer(const std::string& sdp, const std::string& to = {}) override { signal_->answer(sdp, channel_, to); }
+    void negotiation(bool negotiation, const std::string& to = {}) override {
+        signal_->negotiation(negotiation, channel_, to);
+    }
     void subscribe(bool audio, bool video) override { signal_->subscribe(audio, video, channel_); }
-    void candidate(const std::string& candidate) override { signal_->candidate(candidate, channel_); }
+    void candidate(const std::string& candidate, const std::string& to = {}) override {
+        signal_->candidate(candidate, channel_, to);
+    }
     void nodeRtts(const std::vector<std::pair<std::string, int>>& rtts) override { signal_->nodeRtts(rtts, channel_); }
     void mute(bool on, uint32_t rtpTime, bool video) override { signal_->mute(on, rtpTime, video, channel_); }
     void selectChannel(int select) override { signal_->selectChannel(select, channel_); }

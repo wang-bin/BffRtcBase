@@ -73,11 +73,11 @@ public:
     bool joinAllChannelsIfNeeded();
     void srtpKey(const std::string& key, Rtc__SrtpProfile profile, int channel);
     void recreate(int channel);
-    void offer(const std::string& sdp, int channel);
-    void answer(const std::string& sdp, int channel);
-    void negotiation(bool negotiation, int channel);
+    void offer(const std::string& sdp, int channel, const std::string& to = {});
+    void answer(const std::string& sdp, int channel, const std::string& to = {});
+    void negotiation(bool negotiation, int channel, const std::string& to = {});
     void subscribe(bool audio, bool video, int channel);
-    void candidate(const std::string& candidate, int channel);
+    void candidate(const std::string& candidate, int channel, const std::string& to = {});
     void nodeRtts(const std::vector<std::pair<std::string, int>>& rtts, int channel);
     void mute(bool on, uint32_t rtpTime, bool video, int channel);
     void selectChannel(int select, int channel);
