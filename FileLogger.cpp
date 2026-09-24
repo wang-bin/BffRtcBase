@@ -201,6 +201,8 @@ struct FileLogger::Impl {
     deque<string> queue;
     thread worker;
     bool workerStop = false;
+    // File rotation waits for an unlocked worker write to finish before closing its FILE*.
+    bool writeInProgress = false;
     FILE* file = nullptr;
     fs::path logDir;
     fs::path logPath;
@@ -243,22 +245,16 @@ struct FileLogger::Impl {
             string msg = std::move(queue.front());
             queue.pop_front();
             FILE* f = file;
+            writeInProgress = true;
             lock.unlock();
             if (f && !msg.empty()) {
                 fwrite(msg.data(), msg.size(), 1, f);
                 fflush(f);
             }
             lock.lock();
+            writeInProgress = false;
+            cv.notify_all();
         }
-    }
-
-    void EnqueueWrite(string&& message)
-    {
-        {
-            const scoped_lock lock(mtx);
-            queue.push_back(std::move(message));
-        }
-        cv.notify_one();
     }
 
     json LoadMetaLocked() const
@@ -363,20 +359,20 @@ bool FileLogger::newLog(const string& userId, const string& logDir)
     const auto dir = fs::path(logDir);
     const auto path = dir / name;
 
-    FILE* newFile = nullptr;
     error_code ec;
     fs::create_directories(dir, ec);
     if (ec) {
         return false;
     }
-    newFile = fopen(path.string().c_str(), "w+");
-    if (!newFile) {
-        return false;
-    }
 
     string pending;
     {
-        const scoped_lock lock(d_->mtx);
+        unique_lock lock(d_->mtx);
+        d_->cv.wait(lock, [this] { return d_->queue.empty() && !d_->writeInProgress; });
+        FILE* newFile = fopen(path.string().c_str(), "w+");
+        if (!newFile) {
+            return false;
+        }
         if (d_->file) {
             fclose(d_->file);
             d_->file = nullptr;
@@ -388,10 +384,11 @@ bool FileLogger::newLog(const string& userId, const string& logDir)
         d_->file = newFile;
         pending = std::move(d_->pendingLogs);
         d_->pendingLogs.clear();
+        if (!pending.empty()) {
+            d_->queue.push_back(std::move(pending));
+        }
     }
-    if (!pending.empty()) {
-        d_->EnqueueWrite(std::move(pending));
-    }
+    d_->cv.notify_one();
     log(LogLevel::Debug, "log", "Date: " + LocalDateWithZone(clockOffset()));
     if (const auto device = DeviceInfoLine(); !device.empty()) {
         log(LogLevel::Debug, "log", device);
@@ -402,17 +399,7 @@ bool FileLogger::newLog(const string& userId, const string& logDir)
 void FileLogger::stop()
 {
     unique_lock lock(d_->mtx);
-    while (!d_->queue.empty() && d_->file) {
-        string msg = std::move(d_->queue.front());
-        d_->queue.pop_front();
-        FILE* f = d_->file;
-        lock.unlock();
-        if (f && !msg.empty()) {
-            fwrite(msg.data(), msg.size(), 1, f);
-            fflush(f);
-        }
-        lock.lock();
-    }
+    d_->cv.wait(lock, [this] { return d_->queue.empty() && !d_->writeInProgress; });
     if (d_->file) {
         fflush(d_->file);
         fclose(d_->file);
@@ -430,17 +417,27 @@ bool FileLogger::write(const string& text)
         if (!d_->file) {
             return false;
         }
+        d_->queue.push_back(string(text));
     }
-    d_->EnqueueWrite(string(text));
+    d_->cv.notify_one();
     return true;
 }
 
 void FileLogger::log(LogLevel level, const string& tag, const string& message)
 {
     const auto line = LocalTimeWithMs(clockOffset()) + " " + LevelName(level) + " (" + ThreadName() + ") " + tag + ": " + message + "\n";
-    if (!write(line)) {
+    bool queued = false;
+    {
         const scoped_lock lock(d_->mtx);
-        d_->pendingLogs += line;
+        if (d_->file) {
+            d_->queue.push_back(line);
+            queued = true;
+        } else {
+            d_->pendingLogs += line;
+        }
+    }
+    if (queued) {
+        d_->cv.notify_one();
     }
 }
 
@@ -509,6 +506,51 @@ vector<string> FileLogger::files()
             continue;
         }
         paths.push_back(p.string());
+    }
+
+    for (const auto& p : expired) {
+        remove(p.string());
+    }
+    return paths;
+}
+
+vector<string> FileLogger::closedFiles()
+{
+    vector<string> paths;
+    vector<fs::path> expired;
+    {
+        const scoped_lock lock(d_->mtx);
+        if (d_->logDir.empty()) {
+            return paths;
+        }
+
+        error_code ec;
+        const auto nowFt = fs::file_time_type::clock::now();
+        for (const auto& entry : fs::directory_iterator(d_->logDir, ec)) {
+            if (ec) {
+                break;
+            }
+            if (!entry.is_regular_file()) {
+                continue;
+            }
+            const auto& p = entry.path();
+            if (p.filename() == kMetaFileName || p.extension() != ".log") {
+                continue;
+            }
+            if (d_->file && p == d_->logPath) {
+                continue;
+            }
+            const auto ft = entry.last_write_time(ec);
+            if (ec) {
+                continue;
+            }
+            const auto ageSec = chrono::duration_cast<chrono::seconds>(nowFt - ft).count();
+            if (ageSec > d_->retentionSeconds) {
+                expired.push_back(p);
+                continue;
+            }
+            paths.push_back(p.string());
+        }
     }
 
     for (const auto& p : expired) {

@@ -718,19 +718,19 @@ void uploadLog(const std::string& uploadUrl,
     }
 }
 
-void uploadAllLogs(const std::string& uploadUrl, std::function<void(const UploadAllLogsResult&)> cb)
-{
-    static std::mutex uploadAllLogsMtx;
-    static std::unordered_set<std::string> uploadingPaths;
+namespace {
 
-    auto& logger = FileLogger::shared();
-    logger.stop();
-    const auto paths = logger.files();
+void uploadLogFiles(const string& uploadUrl,
+                    vector<string> paths,
+                    function<void(const UploadAllLogsResult&)> cb)
+{
+    static mutex uploadLogFilesMtx;
+    static std::unordered_set<std::string> uploadingPaths;
 
     UploadAllLogsResult summary;
     std::vector<std::string> toUpload;
     {
-        const std::lock_guard<std::mutex> lock(uploadAllLogsMtx);
+        const lock_guard<mutex> lock(uploadLogFilesMtx);
         for (const auto& path : paths) {
             if (uploadingPaths.insert(path).second) {
                 toUpload.push_back(path);
@@ -777,7 +777,7 @@ void uploadAllLogs(const std::string& uploadUrl, std::function<void(const Upload
             }
         }
         {
-            const std::lock_guard<std::mutex> lock(uploadAllLogsMtx);
+            const lock_guard<mutex> lock(uploadLogFilesMtx);
             uploadingPaths.erase(path);
         }
         if (done && state->cb) {
@@ -801,6 +801,21 @@ void uploadAllLogs(const std::string& uploadUrl, std::function<void(const Upload
             finishOne(r, path);
         });
     }
+}
+
+} // namespace
+
+void uploadAllLogs(const std::string& uploadUrl, std::function<void(const UploadAllLogsResult&)> cb)
+{
+    auto& logger = FileLogger::shared();
+    logger.stop();
+    uploadLogFiles(uploadUrl, logger.files(), std::move(cb));
+}
+
+void uploadClosedLogs(const std::string& uploadUrl, std::function<void(const UploadAllLogsResult&)> cb)
+{
+    auto& logger = FileLogger::shared();
+    uploadLogFiles(uploadUrl, logger.closedFiles(), std::move(cb));
 }
 
 } // namespace bff

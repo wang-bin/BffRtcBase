@@ -23,6 +23,7 @@ public:
     std::string getRoom(const std::string& name) const;
 
     std::vector<std::string> files();
+    std::vector<std::string> closedFiles();
     void remove(const std::string& path);
     std::string currentLogName() const;
 

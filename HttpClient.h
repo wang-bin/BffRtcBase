@@ -69,4 +69,9 @@ void uploadLog(const std::string& uploadUrl,
 void uploadAllLogs(const std::string& uploadUrl,
                    std::function<void(const UploadAllLogsResult&)> cb = {});
 
+// Upload retained closed .log files without stopping the process-wide logger.
+// Callback runs on the curl worker thread when all uploads finish (or immediately if none).
+void uploadClosedLogs(const std::string& uploadUrl,
+                      std::function<void(const UploadAllLogsResult&)> cb = {});
+
 } // namespace bff
