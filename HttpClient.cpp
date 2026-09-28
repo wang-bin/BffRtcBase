@@ -810,14 +810,22 @@ void uploadLogFiles(const string& uploadUrl,
 void uploadAllLogs(const std::string& uploadUrl, std::function<void(const UploadAllLogsResult&)> cb)
 {
     auto& logger = FileLogger::shared();
+    const auto files = logger.files();
+    for (const auto& file : files) {
+        DBG("log file: %s", file.c_str());
+    }
     logger.stop();
-    uploadLogFiles(uploadUrl, logger.files(), std::move(cb));
+    uploadLogFiles(uploadUrl, files, std::move(cb));
 }
 
 void uploadClosedLogs(const std::string& uploadUrl, std::function<void(const UploadAllLogsResult&)> cb)
 {
     auto& logger = FileLogger::shared();
-    uploadLogFiles(uploadUrl, logger.closedFiles(), std::move(cb));
+    const auto files = logger.closedFiles();
+    for (const auto& file : files) {
+        DBG("closed log file: %s", file.c_str());
+    }
+    uploadLogFiles(uploadUrl, files, std::move(cb));
 }
 
 } // namespace bff
