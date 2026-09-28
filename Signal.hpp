@@ -27,6 +27,8 @@ public:
     void setSendRequestFn(SendRequestFn sendFn);
     bool connect(const std::string& url);
     void disconnect();
+    // Invokes completion after the leave response or timeout closes all transports.
+    void disconnect(std::function<void()> completionHandler);
     bool isConnected() const;
 
     void setListener(int channel, SignalListener* listener);

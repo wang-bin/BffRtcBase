@@ -533,41 +533,76 @@ public:
         has_alt = false;
     }
 
-    void cancelDisconnectCloseWait() {
-        disconnect_closing = false;
-        disconnect_leave_req_id = 0;
-        disconnect_close_gen.fetch_add(1, memory_order::relaxed);
-    }
-
     void closeSocketAfterDisconnect() {
-        if (!disconnect_closing) {
-            return;
+        {
+            const lock_guard lock(disconnect_mtx);
+            if (!disconnect_closing || disconnect_close_started) {
+                return;
+            }
+            disconnect_close_started = true;
+            disconnect_leave_req_id = 0;
+            disconnect_close_gen.fetch_add(1, memory_order::relaxed);
         }
-        cancelDisconnectCloseWait();
         closeAllTransports(/*join=*/true);
+        vector<function<void()>> completionHandlers;
+        {
+            const lock_guard lock(disconnect_mtx);
+            disconnect_closing = false;
+            disconnect_close_started = false;
+            completionHandlers.swap(disconnect_completion_handlers);
+        }
+        for (auto& completionHandler : completionHandlers) {
+            if (completionHandler) {
+                completionHandler();
+            }
+        }
     }
 
     void scheduleDisconnectCloseTimeout() {
+        uint64_t gen = 0;
+        {
+            const lock_guard lock(disconnect_mtx);
+            if (!disconnect_closing || disconnect_close_started) {
+                return;
+            }
+            gen = disconnect_close_gen.fetch_add(1, memory_order::relaxed) + 1;
+        }
         const int timeout = Config::Shared().signal.pingTimeout;
-        const uint64_t gen = disconnect_close_gen.fetch_add(1, memory_order::relaxed) + 1;
         weak_ptr weak = shared_from_this();
         thread([weak, gen, timeout] {
             if (timeout > 0) {
                 this_thread::sleep_for(timeout * 1ms);
             }
             auto self = weak.lock();
-            if (!self || self->disconnect_close_gen.load(memory_order::relaxed) != gen ||
-                !self->disconnect_closing) {
+            if (!self || self->disconnect_close_gen.load(memory_order::relaxed) != gen) {
                 return;
             }
-            LOGW("disconnect close timeout, leave req %u", self->disconnect_leave_req_id);
+            uint32_t leaveReqId = 0;
+            {
+                const lock_guard lock(self->disconnect_mtx);
+                if (!self->disconnect_closing || self->disconnect_close_started) {
+                    return;
+                }
+                leaveReqId = self->disconnect_leave_req_id;
+            }
+            LOGW("disconnect close timeout, leave req %u", leaveReqId);
             self->closeSocketAfterDisconnect();
         }).detach();
     }
 
+    bool isDisconnectClosing() {
+        const lock_guard lock(disconnect_mtx);
+        return disconnect_closing;
+    }
+
     void maybeCloseAfterDisconnectResponse(uint32_t reqId) {
-        if (disconnect_closing && disconnect_leave_req_id != 0 &&
-            disconnect_leave_req_id == reqId) {
+        bool shouldClose = false;
+        {
+            const lock_guard lock(disconnect_mtx);
+            shouldClose = disconnect_closing && !disconnect_close_started &&
+                disconnect_leave_req_id != 0 && disconnect_leave_req_id == reqId;
+        }
+        if (shouldClose) {
             closeSocketAfterDisconnect();
         }
     }
@@ -831,8 +866,11 @@ public:
     bool recreating = false;
     bool subscribing = false;
     std::atomic<bool> join_all_requested{false};
+    mutex disconnect_mtx;
     bool disconnect_closing = false;
+    bool disconnect_close_started = false;
     uint32_t disconnect_leave_req_id = 0;
+    vector<function<void()>> disconnect_completion_handlers;
     atomic<uint64_t> disconnect_close_gen{0};
 
     // Stack-backed Options for join/recreate; pointers are valid until sendRequest returns.
@@ -903,20 +941,48 @@ bool Signal::connect(const std::string& url) {
 }
 
 void Signal::disconnect() {
+    disconnect({});
+}
+
+void Signal::disconnect(function<void()> completionHandler) {
+    {
+        const lock_guard lock(d->disconnect_mtx);
+        if (d->disconnect_closing) {
+            if (completionHandler) {
+                d->disconnect_completion_handlers.push_back(std::move(completionHandler));
+            }
+            return;
+        }
+        d->disconnect_closing = true;
+        d->disconnect_close_started = false;
+        if (completionHandler) {
+            d->disconnect_completion_handlers.push_back(std::move(completionHandler));
+        }
+    }
     d->user_closed.store(true);
     d->reconnect_gen.fetch_add(1, memory_order::relaxed);
     d->stopKeepalive();
     d->state_string = "closing";
-    d->disconnect_closing = true;
+    {
+        const lock_guard lock(d->pending_mtx);
+        d->pending_reqs.clear();
+    }
     const uint32_t leaveReqId = sendLeave();
     if (leaveReqId != 0) {
-        d->disconnect_leave_req_id = leaveReqId;
-        d->scheduleDisconnectCloseTimeout();
+        bool waitingForLeave = false;
+        {
+            const lock_guard lock(d->disconnect_mtx);
+            waitingForLeave = d->disconnect_closing && !d->disconnect_close_started;
+            if (waitingForLeave) {
+                d->disconnect_leave_req_id = leaveReqId;
+            }
+        }
+        if (waitingForLeave) {
+            d->scheduleDisconnectCloseTimeout();
+        }
     } else {
         d->closeSocketAfterDisconnect();
     }
-    lock_guard lock(d->pending_mtx);
-    d->pending_reqs.clear();
 }
 
 bool Signal::isConnected() const {
@@ -1438,7 +1504,7 @@ void Signal::handleReceiveSignalResponse(const Rtc__SignalResponse* signalRespon
                 if (d->last_code != 200) {
                     // Match ObjC: notify only this channel's listener (not fan-out).
                     if (d->last_code == 602 || d->last_code == 603) {
-                        if (d->disconnect_closing) {
+                        if (d->isDisconnectClosing()) {
                             d->closeSocketAfterDisconnect();
                         } else {
                             d->closeAllTransports(/*join=*/false);
@@ -1449,7 +1515,7 @@ void Signal::handleReceiveSignalResponse(const Rtc__SignalResponse* signalRespon
                         return;
                     }
                     if (d->important_reqs.erase(signalResponse->id) > 0) {
-                        if (d->disconnect_closing) {
+                        if (d->isDisconnectClosing()) {
                             d->closeSocketAfterDisconnect();
                         } else {
                             d->closeAllTransports(/*join=*/false);
