@@ -14,6 +14,9 @@ public:
 
     bool newLog(const std::string& userId, const std::string& logDir);
     void stop();
+    // 仅当当前打开的日志仍是 name 时关闭；若已 newLog 轮转到下一通则不操作。
+    // 用于通话结束上传：关掉本通话文件，又避免旧 stop 误关新通话日志。
+    bool stopIfCurrent(const std::string& name);
     bool write(const std::string& text);
     void log(LogLevel level, const std::string& tag, const std::string& message);
 

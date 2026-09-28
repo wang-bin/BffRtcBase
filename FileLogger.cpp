@@ -407,6 +407,26 @@ void FileLogger::stop()
     }
 }
 
+bool FileLogger::stopIfCurrent(const string& name)
+{
+    if (name.empty()) {
+        return false;
+    }
+    unique_lock lock(d_->mtx);
+    if (d_->logName != name || !d_->file) {
+        return false;
+    }
+    d_->cv.wait(lock, [this] { return d_->queue.empty() && !d_->writeInProgress; });
+    // 等待期间可能已被 newLog 轮转；再确认仍是本会话文件。
+    if (d_->logName != name || !d_->file) {
+        return false;
+    }
+    fflush(d_->file);
+    fclose(d_->file);
+    d_->file = nullptr;
+    return true;
+}
+
 bool FileLogger::write(const string& text)
 {
     if (text.empty()) {
