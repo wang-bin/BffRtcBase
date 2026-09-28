@@ -2,9 +2,11 @@
 
 #include <jni.h>
 
+#include <atomic>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -26,6 +28,7 @@ constexpr int kQuicWsSsl = 1008;
 struct NativeQuicWebSocket {
     std::unique_ptr<bff::QuicSocket> ws;
     jmi::QuicWebSocketClient java_client;
+    std::atomic<bool> destroying{false};
 };
 
 std::mutex g_mutex;
@@ -56,7 +59,8 @@ int mapCloseCode(int code, bool remote) {
 }
 
 void dispatchBytes(NativeQuicWebSocket *native_ws, const std::string &payload, bool binary) {
-    if (!native_ws || !native_ws->java_client || !jmi::getEnv()) {
+    if (!native_ws || native_ws->destroying.load(std::memory_order_acquire) ||
+        !native_ws->java_client || !jmi::getEnv()) {
         return;
     }
     std::vector<jbyte> bytes(payload.begin(), payload.end());
@@ -65,7 +69,8 @@ void dispatchBytes(NativeQuicWebSocket *native_ws, const std::string &payload, b
 
 void wireCallbacks(NativeQuicWebSocket *native_ws) {
     native_ws->ws->setOnOpen([native_ws]() {
-        if (!native_ws->java_client || !jmi::getEnv()) {
+        if (native_ws->destroying.load(std::memory_order_acquire) ||
+            !native_ws->java_client || !jmi::getEnv()) {
             return;
         }
         native_ws->java_client.dispatchOpen();
@@ -76,7 +81,8 @@ void wireCallbacks(NativeQuicWebSocket *native_ws) {
     });
 
     native_ws->ws->setOnClose([native_ws](int code, std::string reason, bool remote) {
-        if (!native_ws->java_client || !jmi::getEnv()) {
+        if (native_ws->destroying.load(std::memory_order_acquire) ||
+            !native_ws->java_client || !jmi::getEnv()) {
             return;
         }
         native_ws->java_client.dispatchClose(static_cast<jint>(mapCloseCode(code, remote)),
@@ -84,7 +90,8 @@ void wireCallbacks(NativeQuicWebSocket *native_ws) {
     });
 
     native_ws->ws->setOnError([native_ws](bff::QuicSocket::Error err) {
-        if (!native_ws->java_client || !jmi::getEnv()) {
+        if (native_ws->destroying.load(std::memory_order_acquire) ||
+            !native_ws->java_client || !jmi::getEnv()) {
             return;
         }
         native_ws->java_client.dispatchError(static_cast<jint>(mapErrorCode(err.kind)),
@@ -96,6 +103,26 @@ void wireCallbacks(NativeQuicWebSocket *native_ws) {
 
 NativeQuicWebSocket *fromHandle(jlong handle) {
     return reinterpret_cast<NativeQuicWebSocket *>(handle);
+}
+
+bool removeLive(NativeQuicWebSocket *native_ws) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    for (auto it = g_live.begin(); it != g_live.end(); ++it) {
+        if (*it == native_ws) {
+            g_live.erase(it);
+            return true;
+        }
+    }
+    return false;
+}
+
+void destroyNative(NativeQuicWebSocket *native_ws) {
+    if (native_ws->ws) {
+        native_ws->ws->close();
+        native_ws->ws.reset();
+    }
+    native_ws->java_client.reset(nullptr, jmi::getEnv());
+    delete native_ws;
 }
 
 } // namespace
@@ -121,29 +148,17 @@ QUICWS_JNI(void, nativeDestroy, jlong handle) {
     if (!native_ws) {
         return;
     }
-
-    if (native_ws->ws) {
-        native_ws->ws->setOnOpen(nullptr);
-        native_ws->ws->setOnClose(nullptr);
-        native_ws->ws->setOnError(nullptr);
-        native_ws->ws->setOnRecv(nullptr);
-        native_ws->ws->onCertVerify(nullptr);
+    if (!removeLive(native_ws)) {
+        return;
+    }
+    // 回调可能仍在事件循环线程运行，先阻止 Java 分发，join 后再释放闭包。
+    native_ws->destroying.store(true, std::memory_order_release);
+    if (native_ws->ws && native_ws->ws->isLoopThread()) {
         native_ws->ws->close();
-        native_ws->ws.reset();
+        std::thread([native_ws] { destroyNative(native_ws); }).detach();
+        return;
     }
-
-    {
-        std::lock_guard<std::mutex> lock(g_mutex);
-        for (auto it = g_live.begin(); it != g_live.end(); ++it) {
-            if (*it == native_ws) {
-                g_live.erase(it);
-                break;
-            }
-        }
-    }
-
-    native_ws->java_client.reset(nullptr, env);
-    delete native_ws;
+    destroyNative(native_ws);
 }
 
 QUICWS_JNI(void, nativeSetConnectTimeout, jlong handle, jint ms) {

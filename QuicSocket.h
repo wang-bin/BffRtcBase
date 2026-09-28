@@ -61,11 +61,16 @@ public:
 
     bool open(const std::string& url);
     bool open(const OpenOptions& options);
+    // 回调内优先调用 closeAsync；事件循环线程调用本方法只请求停机并立即返回。
+    // 其他线程调用会等待循环线程退出并完成清理。
     void close();
     void close(int code, const std::string& reason = {});
     // Cooperative shutdown without joining the QUIC loop thread (safe from
-    // that thread). ~QuicSocket / a later open() joins.
+    // that thread). Destruction from a callback transfers final cleanup to an
+    // off-loop thread.
     void closeAsync(int code = 0, const std::string& reason = {});
+
+    bool isLoopThread() const noexcept;
 
     bool send(const std::string& data, bool binary) {
         return send(data.data(), data.size(), binary);

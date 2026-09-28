@@ -535,15 +535,9 @@ allowsUntrustedSSLCertificates:(BOOL)allowsUntrustedSSLCertificates
 
 - (void)dealloc
 {
-    if (_ws) {
-        _ws->setOnOpen(nullptr);
-        _ws->setOnClose(nullptr);
-        _ws->setOnError(nullptr);
-        _ws->setOnRecv(nullptr);
-        _ws->onCertVerify(nullptr);
-        _ws->close();
-        _ws.reset();
-    }
+    // QUIC 回调可能仍在运行；替换 std::function 会破坏当前回调。
+    // QuicSocket 等待事件循环退出后再释放回调。
+    _ws.reset();
 }
 
 @end

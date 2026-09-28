@@ -15,6 +15,7 @@
 #include <mutex>
 #include <span>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -278,7 +279,7 @@ public:
         if (!socket) {
             return;
         }
-        socket->close();
+        socket->closeAndWait();
         socket.reset();
     }
 
@@ -488,6 +489,19 @@ public:
 QuicSocket::QuicSocket() : d(std::make_unique<Private>()) {}
 
 QuicSocket::~QuicSocket() {
+    if (d && d->socket && d->socket->isLoopThread()) {
+        auto *impl = d.get();
+        auto *socket = impl->socket.get();
+        close();
+        d.release();
+        std::thread([impl, socket] {
+            // 回调返回并退出事件循环后，才能销毁 Socket 和 Private。
+            socket->closeAndWait();
+            impl->socket.reset();
+            delete impl;
+        }).detach();
+        return;
+    }
     close();
 }
 
@@ -500,6 +514,9 @@ bool QuicSocket::open(const std::string &url) {
 bool QuicSocket::open(const OpenOptions &options) {
     const auto current = d->state.load(std::memory_order_acquire);
     if (current == State::Connecting || current == State::Open) {
+        return false;
+    }
+    if (d->socket && d->socket->isLoopThread()) {
         return false;
     }
 
@@ -533,9 +550,10 @@ bool QuicSocket::open(const OpenOptions &options) {
     d->state.store(State::Connecting, std::memory_order_release);
 
     d->socket = std::make_unique<quic::Socket>();
-    d->socket->onCertVerify([this](void *ssl_ctx) {
-        if (d->on_cert_verify) {
-            return d->on_cert_verify(ssl_ctx);
+    auto *impl = d.get();
+    d->socket->onCertVerify([impl](void *ssl_ctx) {
+        if (impl->on_cert_verify) {
+            return impl->on_cert_verify(ssl_ctx);
         }
         return AddCertsToSSL(ssl_ctx);
     });
@@ -592,7 +610,19 @@ void QuicSocket::close(int code, const std::string &reason) {
     if (!d) {
         return;
     }
-    d->requestClose(code, reason);
+    if (d->socket && d->socket->isLoopThread()) {
+        const auto current = d->state.load(std::memory_order_acquire);
+        if (current != State::Closing && current != State::Closed) {
+            d->requestClose(code, reason);
+        } else {
+            d->socket->close();
+        }
+        return;
+    }
+    const auto current = d->state.load(std::memory_order_acquire);
+    if (current != State::Closing && current != State::Closed) {
+        d->requestClose(code, reason);
+    }
     d->resetSocket();
     if (!d->close_called.load(std::memory_order_acquire) &&
         !d->error_reported.load(std::memory_order_acquire)) {
@@ -600,6 +630,10 @@ void QuicSocket::close(int code, const std::string &reason) {
     }
     d->state.store(State::Closed, std::memory_order_release);
     d->running.store(false, std::memory_order_release);
+}
+
+bool QuicSocket::isLoopThread() const noexcept {
+    return d && d->socket && d->socket->isLoopThread();
 }
 
 void QuicSocket::closeAsync(int code, const std::string &reason) {
