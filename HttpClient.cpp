@@ -102,6 +102,8 @@ HttpClient::Result from(const restincurl::Result& r)
                 .responseBody = r.body,
                 .error = r.msg,
                 .curlCode = (int)r.curl_code,
+                .requestRttMs = r.request_rtt_us / 1000,
+                .responseBodyElapsedMs = r.response_body_elapsed_us / 1000,
             };
 }
 

@@ -256,11 +256,10 @@ void NodeSelector::updateNodesInternal(const std::string& server,
         hc.header("Authorization", *token);
     }
 
-    const auto requestTime = std::chrono::system_clock::now().time_since_epoch()
-                           / std::chrono::milliseconds{1};
-    hc.get(url, [this, extraServers, completionHandler = std::move(completionHandler), requestTime](const HttpClient::Result& r) mutable {
-        const auto responseTime = std::chrono::system_clock::now().time_since_epoch()
-                                / std::chrono::milliseconds{1};
+    hc.get(url, [this, extraServers, completionHandler = std::move(completionHandler)](const HttpClient::Result& r) mutable {
+        const auto responseCompleteTime = std::chrono::system_clock::now().time_since_epoch()
+                                        / std::chrono::milliseconds{1};
+        const auto responseTime = responseCompleteTime - std::max<int64_t>(0, r.responseBodyElapsedMs);
         bool sort = false;
         auto autoDone = [&] {
             if (completionHandler) completionHandler();
@@ -315,9 +314,12 @@ void NodeSelector::updateNodesInternal(const std::string& server,
         if (j.contains("current_time") && j["current_time"].is_number_integer()) {
             const auto serverTime = j["current_time"].get<int64_t>();
             if (serverTime > 0) {
-                // current_time 是服务端处理请求的时刻；用客户端收发时间中点估算，降低网络时延影响。
-                const auto clientTime = requestTime + (responseTime - requestTime) / 2;
-                const auto clockOffset = serverTime - static_cast<int64_t>(clientTime);
+                // current_time 是服务端生成响应时的时间，responseTime 是客户端收到 nodelist 响应时的本地时间。
+                // RTT 从 TLS 握手完成后开始计量，不包含建连耗时。
+                // 假设上下行时延近似对称且服务端处理耗时较小，回程时延约为 HTTP RTT / 2。
+                // 因而 clockOffset = current_time - responseTime + HTTP RTT / 2；此处不使用 STUN RTT。
+                const auto clockOffset = serverTime - static_cast<int64_t>(responseTime)
+                                       + std::max<int64_t>(0, r.requestRttMs) / 2;
                 FileLogger::shared().setClockOffset(clockOffset);
                 INFO("nodelist clock offset: %lldms", static_cast<long long>(clockOffset));
             }

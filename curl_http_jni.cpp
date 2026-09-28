@@ -29,11 +29,13 @@ NativeHttpClient *fromHandle(jlong handle) {
 
 jobject makeResult(JNIEnv *env, const HttpClient::Result &result) {
     jclass cls = env->FindClass("com/jspp/avrtcsdk/impl/CurlHttpClient$Result");
-    jmethodID ctor = env->GetMethodID(cls, "<init>", "(IILjava/lang/String;Ljava/lang/String;I)V");
+    jmethodID ctor = env->GetMethodID(cls, "<init>", "(IILjava/lang/String;Ljava/lang/String;IJJ)V");
     jmi::LocalRef body(result.responseBody.empty() ? nullptr : jmi::from_string(result.responseBody, env), env);
     jmi::LocalRef error(result.error.empty() ? nullptr : jmi::from_string(result.error, env), env);
     jobject ret = env->NewObject(cls, ctor, result.httpCode, result.bytesSent, body.get<jstring>(),
-                                 error.get<jstring>(), result.curlCode);
+                                 error.get<jstring>(), result.curlCode,
+                                 static_cast<jlong>(result.requestRttMs),
+                                 static_cast<jlong>(result.responseBodyElapsedMs));
     env->DeleteLocalRef(cls);
     return ret;
 }

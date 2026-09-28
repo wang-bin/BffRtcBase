@@ -3,7 +3,8 @@
 /*
     MIT License
 
-    Copyright (c) 2018 - 2025 Jarle Aase
+    Copyright (c) 2018 - 2026 Jarle Aase
+    AI participated
 
     Permission is hereby granted, free of charge, to any person obtaining a copy
     of this software and associated documentation files (the "Software"), to deal
@@ -236,6 +237,8 @@ namespace restincurl {
         /*! The HTTP result code for the request */
         long http_response_code = {};
         curl_off_t bytes_sent = 0;
+        curl_off_t request_rtt_us = 0;
+        curl_off_t response_body_elapsed_us = 0;
 
         /*! If the request was unsuccessful (curl_code != 0), the error string reported by libcurl. */
         std::string msg;
@@ -536,6 +539,19 @@ namespace restincurl {
             curl_easy_getinfo (*eh_, CURLINFO_RESPONSE_CODE,
                                &result.http_response_code);
             curl_easy_getinfo(*eh_, CURLINFO_SIZE_UPLOAD_T, &result.bytes_sent);
+            curl_off_t pretransfer_us = 0;
+            curl_off_t starttransfer_us = 0;
+            curl_off_t total_us = 0;
+            if (curl_easy_getinfo(*eh_, CURLINFO_PRETRANSFER_TIME_T, &pretransfer_us) == CURLE_OK &&
+                curl_easy_getinfo(*eh_, CURLINFO_STARTTRANSFER_TIME_T, &starttransfer_us) == CURLE_OK &&
+                starttransfer_us >= pretransfer_us) {
+                result.request_rtt_us = starttransfer_us - pretransfer_us;
+            }
+            if (curl_easy_getinfo(*eh_, CURLINFO_TOTAL_TIME_T, &total_us) == CURLE_OK &&
+                curl_easy_getinfo(*eh_, CURLINFO_STARTTRANSFER_TIME_T, &starttransfer_us) == CURLE_OK &&
+                total_us >= starttransfer_us) {
+                result.response_body_elapsed_us = total_us - starttransfer_us;
+            }
             // if content-length is unknown, cuhunked encoding, CURLINFO_SIZE_UPLOAD_T is a few bytes larger, then must use payloadBytesSent()
             if (default_out_handler_) {
                 const auto payload_bytes = default_out_handler_->payloadBytesSent();

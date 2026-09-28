@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
@@ -14,6 +15,8 @@ public:
         std::string error;
         int curlCode;
         std::string responseHeaders; // TODO:
+        int64_t requestRttMs = 0;
+        int64_t responseBodyElapsedMs = 0;
 
         bool isSecError() const;
     };
