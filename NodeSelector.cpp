@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <ctime>
 #include <set>
@@ -27,6 +28,7 @@ struct NodeCache {
     std::mutex mtx;
     std::vector<std::string> nodes; // list without port
     std::string best_node;
+    int best_rtt = 0;
     std::time_t nodes_time = 0;
     std::string nodes_info_json;
     std::string ip;
@@ -175,10 +177,11 @@ void NodeSelector::asyncSort(const std::vector<std::string>& nodesWithPort, cons
             }
 
             auto info = rttsToJsonObjectString(ret);
-            auto best = ret.empty() ? std::string() : ret.front().first;
+            const auto best = ret.front().first;
             {
                 std::lock_guard<std::mutex> lk(cache().mtx);
                 cache().best_node = best;
+                cache().best_rtt = ret.front().second;
                 cache().nodes_time = std::time(nullptr);
                 cache().nodes = std::move(nodesNoPort);
                 cache().nodes_info_json = std::move(info);
@@ -205,7 +208,7 @@ void NodeSelector::updateNodes(const std::vector<std::string>& servers,
         return;
     }
 
-    // ObjC version sorts bootstrap servers quickly (100ms) using STUN on :3478.
+    // Use the cached best node as an extra bootstrap candidate and bound STUN wait to 300ms.
     std::vector<std::string> ss;
     ss.reserve(servers.size());
     std::set<std::string> cs;
@@ -216,9 +219,22 @@ void NodeSelector::updateNodes(const std::vector<std::string>& servers,
         ss.push_back(hp);
     }
 
-    std::thread([this, cs = std::move(cs), ss = std::move(ss), tokenStr = token ? *token : std::string(), completionHandler = std::move(completionHandler)]() mutable {
+    std::string cachedBestNode;
+    int cachedBestRtt = 0;
+    {
+        std::lock_guard<std::mutex> lk(cache().mtx);
+        cachedBestNode = cache().best_node;
+        cachedBestRtt = cache().best_rtt;
+    }
+    if (!cachedBestNode.empty()) {
+        cs.insert(hostFromAddr(cachedBestNode) + ":3478");
+    }
+    const auto timeout = static_cast<int>(std::ceil(std::min(
+        cachedBestRtt > 0 ? cachedBestRtt * 1.5 : 300.0, 300.0)));
+
+    std::thread([this, cs = std::move(cs), ss = std::move(ss), timeout, tokenStr = token ? *token : std::string(), completionHandler = std::move(completionHandler)]() mutable {
         const auto start = std::chrono::steady_clock::now();
-        const auto ret = SortStun(cs, 100);
+        const auto ret = SortStun(cs, timeout);
         const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                                     std::chrono::steady_clock::now() - start)
                                     .count();
@@ -379,6 +395,7 @@ void NodeSelector::testBestUrl(const std::string& serverUrl, BestUrlCallback com
             // Clear cache on environment change.
             std::lock_guard<std::mutex> lk(cache().mtx);
             cache().best_node.clear();
+            cache().best_rtt = 0;
             cache().nodes.clear();
             completionHandler(serverUrl, &hosts);
             return;
@@ -491,9 +508,8 @@ std::string NodeSelector::onNodeList(const std::vector<std::string>& nodes,
         best = result.front().first;
     }
 
-    if (result.size() < servers.size()) {
-        asyncSort(nodesWithPort, clientIp);
-    } else {
+    const auto needsAsyncSort = result.size() < servers.size();
+    if (!needsAsyncSort) {
         updateRtts(result);
     }
 
@@ -501,9 +517,16 @@ std::string NodeSelector::onNodeList(const std::vector<std::string>& nodes,
         std::lock_guard<std::mutex> lk(cache().mtx);
         cache().nodes = nodes;
         cache().best_node = best;
+        if (!result.empty()) {
+            cache().best_rtt = result.front().second;
+        }
         cache().nodes_time = std::time(nullptr);
         cache().nodes_info_json = rttsToJsonObjectString(result);
         cache().ip = clientIp ? *clientIp : std::string();
+    }
+
+    if (needsAsyncSort) {
+        asyncSort(nodesWithPort, clientIp);
     }
 
     return best;
