@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <functional>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -54,6 +55,7 @@ public:
 
 private:
     void updateRtts(const Rtts& result);
+    void clearRecentBestNodeResult();
     void asyncSort(const std::vector<std::string>& nodesWithPort, const std::string* ip);
     void testBestUrl(const std::string& serverUrl, BestUrlCallback completionHandler);
     void setConnectCancelFlag(std::shared_ptr<std::atomic_bool> cancel);
@@ -69,6 +71,7 @@ private:
     std::mutex update_nodes_mtx_;
     std::condition_variable update_nodes_cv_;
     int update_nodes_count_ = 0;
+    std::optional<std::string> recent_best_node_result_;
 
     std::mutex connect_cancel_mtx_;
     std::shared_ptr<std::atomic_bool> connect_cancel_;

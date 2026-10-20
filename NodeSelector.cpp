@@ -101,6 +101,11 @@ void NodeSelector::updateRtts(const Rtts& result) {
     }
 }
 
+void NodeSelector::clearRecentBestNodeResult() {
+    std::lock_guard<std::mutex> lock(update_nodes_mtx_);
+    recent_best_node_result_.reset();
+}
+
 void NodeSelector::applyNodeRtts(const Rtts& rtts, bool isSelf) {
     if (isSelf) {
         node_rtts_self_ = rtts;
@@ -191,6 +196,9 @@ void NodeSelector::asyncSort(const std::vector<std::string>& nodesWithPort, cons
 
         {
             std::unique_lock<std::mutex> lock(update_nodes_mtx_);
+            if (save) {
+                recent_best_node_result_ = ret.front().first;
+            }
             update_nodes_count_ = 0;
         }
         update_nodes_cv_.notify_one();
@@ -207,6 +215,7 @@ void NodeSelector::updateNodes(const std::vector<std::string>& servers,
         if (completionHandler) completionHandler();
         return;
     }
+    clearRecentBestNodeResult();
 
     // Use the cached best node as an extra bootstrap candidate and bound STUN wait to 300ms.
     std::vector<std::string> ss;
@@ -261,6 +270,7 @@ void NodeSelector::updateNodesInternal(const std::string& server,
                                        CompletionCallback completionHandler) {
     {
         std::unique_lock<std::mutex> lock(update_nodes_mtx_);
+        recent_best_node_result_.reset();
         update_nodes_count_ = 2;
     }
 
@@ -388,18 +398,27 @@ void NodeSelector::testBestUrl(const std::string& serverUrl, BestUrlCallback com
         cache().server_ip = oldHost;
     }
 
-    // If server host isn't part of the saved node list, skip best-node rewrite.
-    if (!savedNodes.empty()) {
-        const bool contains = std::find(savedNodes.begin(), savedNodes.end(), oldHost) != savedNodes.end();
-        if (!contains) {
-            // Clear cache on environment change.
-            std::lock_guard<std::mutex> lk(cache().mtx);
-            cache().best_node.clear();
-            cache().best_rtt = 0;
-            cache().nodes.clear();
-            completionHandler(serverUrl, &hosts);
-            return;
-        }
+    // Match the wrapper behavior: only reuse a best node when this signal host
+    // is present in the cached node list.
+    const bool contains = std::find(savedNodes.begin(), savedNodes.end(), oldHost) != savedNodes.end();
+    if (!contains) {
+        clearRecentBestNodeResult();
+        std::lock_guard<std::mutex> lk(cache().mtx);
+        cache().best_node.clear();
+        cache().best_rtt = 0;
+        cache().nodes.clear();
+        completionHandler(serverUrl, &hosts);
+        return;
+    }
+
+    std::optional<std::string> recentBestNode;
+    {
+        std::lock_guard<std::mutex> lock(update_nodes_mtx_);
+        recentBestNode = recent_best_node_result_;
+    }
+    const bool reuseRecentBestNode = recentBestNode.has_value();
+    if (recentBestNode) {
+        savedBestIp = *recentBestNode;
     }
 
     if (savedBestIp.empty()) {
@@ -410,20 +429,35 @@ void NodeSelector::testBestUrl(const std::string& serverUrl, BestUrlCallback com
     auto cancel = std::make_shared<std::atomic_bool>(false);
     setConnectCancelFlag(cancel);
 
-    std::thread([serverUrl, oldHost, savedBestIp, savedIp, hosts = std::move(hosts), completionHandler = std::move(completionHandler), cancel]() mutable {
+    std::thread([serverUrl, oldHost, savedBestIp, savedIp, reuseRecentBestNode, hosts = std::move(hosts), completionHandler = std::move(completionHandler), cancel]() mutable {
         if (cancel && cancel->load()) {
             return;
         }
 
         std::string ipNow;
-        auto ret = SortStun({savedBestIp}, 1000, &ipNow);
+        const auto start = std::chrono::steady_clock::now();
+        Rtts ret;
+        if (!reuseRecentBestNode) {
+            ret = SortStun({savedBestIp}, 1000, &ipNow);
+        }
         if (cancel && cancel->load()) {
             return;
         }
 
-        if (ret.empty()) {
+        if (!reuseRecentBestNode && ret.empty()) {
             completionHandler(serverUrl, nullptr);
             return;
+        }
+
+        if (reuseRecentBestNode) {
+            INFO("reuse recently measured best node");
+        } else {
+            INFO("previous client ip: %s", savedIp.c_str());
+            INFO("test node elapsed: %lldms", static_cast<long long>(
+                (std::chrono::steady_clock::now() - start) / std::chrono::milliseconds{1}));
+            if (ipNow != savedIp) {
+                WARN("client ip changed");
+            }
         }
 
         // Suggest ip -> host mapping (mimics ObjC behavior).
@@ -433,7 +467,6 @@ void NodeSelector::testBestUrl(const std::string& serverUrl, BestUrlCallback com
             }
         }
 
-        (void)savedIp;
         const auto bestUrl = replaceHost(serverUrl, oldHost, savedBestIp);
         completionHandler(bestUrl, &hosts);
     }).detach();
@@ -523,6 +556,14 @@ std::string NodeSelector::onNodeList(const std::vector<std::string>& nodes,
         cache().nodes_time = std::time(nullptr);
         cache().nodes_info_json = rttsToJsonObjectString(result);
         cache().ip = clientIp ? *clientIp : std::string();
+    }
+    {
+        std::lock_guard<std::mutex> lock(update_nodes_mtx_);
+        if (result.empty()) {
+            recent_best_node_result_.reset();
+        } else {
+            recent_best_node_result_ = result.front().first;
+        }
     }
 
     if (needsAsyncSort) {
