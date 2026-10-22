@@ -1,8 +1,11 @@
 #include "SignalChannel.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
+#include <limits>
 #include <map>
+#include <mutex>
 #include <unordered_set>
 
 #include "Signal.hpp"
@@ -11,6 +14,7 @@ namespace bff {
 namespace {
 
 constexpr uint32_t kPerChannelNodeRttsSdkVersion = 10302;
+constexpr uint64_t kNoMuteKey = std::numeric_limits<uint64_t>::max();
 
 std::string toLower(std::string s) {
     std::transform(s.begin(), s.end(), s.begin(), [](unsigned char ch) {
@@ -66,7 +70,7 @@ std::vector<std::pair<std::string, int>> toNodeRtts(const Rtc__PeerInfo* peer) {
 class SignalChannelImpl : public SignalChannel {
 public:
     SignalChannelImpl(std::shared_ptr<Signal> signal, int channel)
-        : signal_(std::move(signal)), channel_(channel) {}
+        : signal_(std::move(signal)), channel_(channel), mute_generation_(signal_->muteStateGeneration()) {}
 
     uint32_t rtt() const override { return signal_->rttForChannel(channel_); }
     const std::string& stateString() const override { return signal_->stateString(); }
@@ -153,14 +157,37 @@ public:
     }
 
     void srtpKey(const std::string& key, Rtc__SrtpProfile profile) override { signal_->srtpKey(key, profile, channel_); }
-    void recreate() override { signal_->recreate(channel_); }
+    void recreate() override {
+        {
+            std::lock_guard lock(mute_mtx_);
+            last_muted_.fill(kNoMuteKey);
+            mute_generation_ = signal_->muteStateGeneration();
+        }
+        signal_->recreate(channel_);
+    }
     void offer(const std::string& sdp) override { signal_->offer(sdp, channel_); }
     void answer(const std::string& sdp) override { signal_->answer(sdp, channel_); }
     void negotiation(bool negotiation) override { signal_->negotiation(negotiation, channel_); }
     void subscribe(bool audio, bool video) override { signal_->subscribe(audio, video, channel_); }
     void candidate(const std::string& candidate) override { signal_->candidate(candidate, channel_); }
     void nodeRtts(const std::vector<std::pair<std::string, int>>& rtts) override { signal_->nodeRtts(rtts, channel_); }
-    void mute(bool on, uint32_t rtpTime, bool video) override { signal_->mute(on, rtpTime, video, channel_); }
+    void mute(bool on, uint32_t rtpTime, bool video) override {
+        {
+            std::lock_guard lock(mute_mtx_);
+            const auto generation = signal_->muteStateGeneration();
+            if (mute_generation_ != generation) {
+                last_muted_.fill(kNoMuteKey);
+                mute_generation_ = generation;
+            }
+            const auto media_index = video ? 1U : 0U;
+            const auto mute_key = (static_cast<uint64_t>(rtpTime) << 1) | (on ? 1U : 0U);
+            if (last_muted_[media_index] == mute_key) {
+                return;
+            }
+            last_muted_[media_index] = mute_key;
+        }
+        signal_->mute(on, rtpTime, video, channel_);
+    }
     void selectChannel(int select) override { signal_->selectChannel(select, channel_); }
     void report(const Rtc__Stats* stats, int64_t startTimeSinceEpoch) override {
         signal_->report(stats, startTimeSinceEpoch, channel_);
@@ -169,10 +196,14 @@ public:
 private:
     std::shared_ptr<Signal> signal_;
     int channel_;
+    std::mutex mute_mtx_;
+    uint64_t mute_generation_;
     std::unordered_set<std::string> peers_;
     std::unordered_set<std::string> joined_peers_;
     bool joined_ = false;
     std::map<std::string, bool> video_orientation_;
+    // 每种媒体保存 (RTP 时间戳, mute) 编码值；重连代次变化后自动失效。
+    std::array<uint64_t, 2> last_muted_{kNoMuteKey, kNoMuteKey};
 };
 
 SignalChannelPtr createSignalChannel(std::shared_ptr<Signal> signal, int channel) {

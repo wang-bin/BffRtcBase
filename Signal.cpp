@@ -623,6 +623,7 @@ public:
     // App thread only: join previous workers, then open per SignalOptions.implementation.
     bool beginConnect(const std::string& url) {
         reconnect_gen.fetch_add(1, memory_order::relaxed);
+        mute_state_epoch.fetch_add(1, memory_order::relaxed);
         stopKeepalive();
         if (!token.empty()) {
             HttpClient::setAuthToken(token);
@@ -774,6 +775,7 @@ public:
             }
             return;
         }
+        mute_state_epoch.fetch_add(1, memory_order::relaxed);
         const int n = reconnect_count.fetch_add(1, memory_order::relaxed) + 1;
         LOGI("reconnect %d/%d", n, maxTimes);
         resetJoinStateForReconnect();
@@ -823,6 +825,7 @@ public:
     std::unordered_map<int, uint32_t> rtts;
 
     std::atomic<uint32_t> msg_id{1};
+    std::atomic<uint64_t> mute_state_epoch{0};
     std::unordered_map<uint32_t, bool> important_reqs;
     mutex pending_mtx;
     vector<string> pending_reqs;
@@ -961,6 +964,7 @@ void Signal::disconnect(function<void()> completionHandler) {
     }
     d->user_closed.store(true);
     d->reconnect_gen.fetch_add(1, memory_order::relaxed);
+    d->mute_state_epoch.fetch_add(1, memory_order::relaxed);
     d->stopKeepalive();
     d->state_string = "closing";
     {
@@ -1552,6 +1556,10 @@ void Signal::handleReceiveSignalResponse(const Rtc__SignalResponse* signalRespon
 
 void Signal::onReconnect() {
     d->scheduleReconnect(Config::Shared().signal.reconnectInterval);
+}
+
+uint64_t Signal::muteStateGeneration() const {
+    return d->mute_state_epoch.load(memory_order::relaxed);
 }
 
 void Signal::sendPing() {

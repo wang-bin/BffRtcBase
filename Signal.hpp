@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
@@ -91,6 +92,9 @@ public:
     void onError(RtcError error);
 
 private:
+    friend class SignalChannelImpl;
+    uint64_t muteStateGeneration() const;
+
     SignalListener* listenerForChannel(int channel) const;
     void enumerateListeners(const std::function<void(int channel, SignalListener*)>& fn) const;
     bool sendRequest(Rtc__SignalRequest& req, bool important = false);
