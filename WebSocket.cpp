@@ -1,5 +1,7 @@
 #include "WebSocket.h"
 #include "SniUrl.h"
+#include "ConnectionTiming.h"
+#include <cinttypes>
 
 #if __has_include(<curl/curl.h>)
 
@@ -125,6 +127,31 @@ public:
     std::atomic<WebSocket::State> state{WebSocket::State::Closed};
     std::thread thread;
 
+    uint64_t attempt_id = 0;
+    chrono::steady_clock::time_point open_started;
+    bool tls_logged = false;
+
+    // curl 计时口径：open_ms 从 open() 入口到 WebSocket Upgrade 成功；
+    // tls_ms = APPCONNECT_TIME_T - CONNECT_TIME_T，表示 TCP 建立后的 TLS 阶段。
+    // libcurl 记录真实阶段边界，读取只能发生在工作线程。
+    static bool tlsTimes(CURL *handle, curl_off_t &connect, curl_off_t &appconnect) {
+        return handle &&
+            curl_easy_getinfo(handle, CURLINFO_CONNECT_TIME_T, &connect) == CURLE_OK &&
+            curl_easy_getinfo(handle, CURLINFO_APPCONNECT_TIME_T, &appconnect) == CURLE_OK &&
+            connect >= 0 && appconnect > 0 && appconnect >= connect;
+    }
+
+    void logTls(CURL *handle) {
+        if (tls_logged) {
+            return;
+        }
+        curl_off_t connect = 0, appconnect = 0;
+        if (tlsTimes(handle, connect, appconnect)) {
+            tls_logged = true;
+            DBG("tlsDone. attempt_id=%" PRIu64 " connect_ms=%.3f appconnect_ms=%.3f tls_ms=%.3f", attempt_id, connect / 1000.0, appconnect / 1000.0, (appconnect - connect) / 1000.0);
+        }
+    }
+
     std::string url;
     std::vector<std::pair<std::string, std::string>> headers;
     std::string last_error;
@@ -183,10 +210,17 @@ public:
         }
     }
 
-    void notifyOpen() {
+    void notifyOpen(CURL *handle) {
         bool expected = false;
         if (!open_notified.compare_exchange_strong(expected, true)) {
             return;
+        }
+        const double open_ms = (chrono::steady_clock::now() - open_started) / chrono::duration<double, milli>(1);
+        curl_off_t connect = 0, appconnect = 0;
+        if (tlsTimes(handle, connect, appconnect)) {
+            DBG("onOpen. attempt_id=%" PRIu64 " open_ms=%.3f tls_ms=%.3f", attempt_id, open_ms, (appconnect - connect) / 1000.0);
+        } else {
+            DBG("onOpen. attempt_id=%" PRIu64 " open_ms=%.3f tls_ms=unavailable", attempt_id, open_ms);
         }
         state.store(WebSocket::State::Open);
         if (on_open) {
@@ -241,7 +275,7 @@ public:
         }
         // RESPONSE_CODE becomes 101 only after successful WS upgrade — not during TCP/TLS/HTTP.
         if (ud->easy && isWsUpgraded(ud->easy)) {
-            ud->self->notifyOpen();
+            ud->self->notifyOpen(ud->easy);
         }
         return ud->self->abort.load() ? 1 : 0;
     }
@@ -264,7 +298,7 @@ public:
         }
 
         // Fallback if xferinfo did not see 101 yet (first inbound frame implies upgrade).
-        ud->self->notifyOpen();
+        ud->self->notifyOpen(ud->easy);
 
         // ignore ping/pong here (autopong by default)
         if ((meta->flags & CURLWS_PING) || (meta->flags & CURLWS_PONG)) {
@@ -520,6 +554,9 @@ bool WebSocket::open(const std::string& url) {
 }
 
 bool WebSocket::open(const OpenOptions& options) {
+    d->open_started = chrono::steady_clock::now();
+    d->attempt_id = NextConnectionAttemptId();
+    d->tls_logged = false;
     d->url = normalize_ws_url(options.url);
     DBG("open. sni_host=%s url=%s", options.sni_host.c_str(), d->url.c_str());
     d->headers = options.headers;
@@ -627,6 +664,7 @@ bool WebSocket::open(const OpenOptions& options) {
         int still_running = 1;
         while (!d->abort.load() && still_running) {
             mc = curl_multi_perform(multi, &still_running);
+            d->logTls(easy);
             if (mc != CURLM_OK) {
                 d->fireError(Error{
                     .curlCode = static_cast<int>(mc),

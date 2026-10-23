@@ -1,4 +1,5 @@
 #include "QuicSocket.h"
+#include "ConnectionTiming.h"
 
 #include "Cert.h"
 #include "Log.hpp"
@@ -254,6 +255,16 @@ public:
     std::atomic<bool> error_reported{false};
     std::atomic<bool> close_called{false};
 
+    // QUIC 计时口径：open_ms 从有效 open() 入口到业务状态码 200；
+    // handshake_ms 从 DNS 后调用底层 open() 前到握手完成通知抵达此层；
+    // tls_ms 是底层首次驱动 TLS 到握手完成回调入口的耗时。
+    // overhead_ms = handshake_ms - tls_ms，包含本地初始化与通知传递的差值。
+    uint64_t attempt_id = 0;
+    std::chrono::steady_clock::time_point open_started;
+    std::chrono::steady_clock::time_point handshake_started;
+    double handshake_ms = -1;
+    double tls_ms = -1;
+
     int connect_timeout = 0;
     std::string last_error;
     int last_error_code = 0;
@@ -356,7 +367,12 @@ public:
             }
             bool expected = false;
             if (open_notified.compare_exchange_strong(expected, true)) {
-                DBG("onOpen");
+                const double open_ms = (std::chrono::steady_clock::now() - open_started) / std::chrono::duration<double, std::milli>(1);
+                if (tls_ms >= 0 && handshake_ms >= 0) {
+                    DBG("onOpen. attempt_id=%" PRIu64 " open_ms=%.3f handshake_ms=%.3f tls_ms=%.3f overhead_ms=%.3f", attempt_id, open_ms, handshake_ms, tls_ms, handshake_ms - tls_ms);
+                } else {
+                    DBG("onOpen. attempt_id=%" PRIu64 " open_ms=%.3f handshake_ms=unavailable tls_ms=unavailable overhead_ms=unavailable", attempt_id, open_ms);
+                }
                 state.store(State::Open, std::memory_order_release);
                 if (on_open) {
                     on_open();
@@ -390,6 +406,16 @@ public:
     }
 
     void wireCallbacks() {
+        socket->onHandshakeDone([this](int64_t duration_ns) {
+            handshake_ms = (std::chrono::steady_clock::now() - handshake_started) / std::chrono::duration<double, std::milli>(1);
+            tls_ms = duration_ns >= 0 ? duration_ns / 1000000.0 : -1;
+            // 在底层握手完成事件中立即输出，业务握手失败时仍保留该记录。
+            if (tls_ms >= 0) {
+                DBG("handshakeDone. attempt_id=%" PRIu64 " tls_ms=%.3f", attempt_id, tls_ms);
+            } else {
+                DBG("handshakeDone. attempt_id=%" PRIu64 " tls_ms=unavailable", attempt_id);
+            }
+        });
         socket->onOpen([](const sockaddr *addr, socklen_t len) {
             char hostbuf[NI_MAXHOST] = {};
             char service[NI_MAXSERV] = {};
@@ -520,10 +546,15 @@ bool QuicSocket::open(const OpenOptions &options) {
         return false;
     }
 
+    const auto open_started = std::chrono::steady_clock::now();
     // Join a previous loop thread before creating a new Socket. Must run off
     // the QUIC loop thread (same contract as quic::Socket::~Socket).
     d->resetSocket();
 
+    d->open_started = open_started;
+    d->attempt_id = NextConnectionAttemptId();
+    d->handshake_ms = -1;
+    d->tls_ms = -1;
     d->last_error.clear();
     d->last_error_code = 0;
     d->open_notified.store(false, std::memory_order_release);
@@ -580,6 +611,8 @@ bool QuicSocket::open(const OpenOptions &options) {
 
     int rc = quic::Err;
     for (auto *rp = res; rp; rp = rp->ai_next) {
+        // 每次同步地址尝试独立计时，成功启动后不再覆盖起点。
+        d->handshake_started = std::chrono::steady_clock::now();
         rc = d->socket->open(rp->ai_addr, rp->ai_addrlen);
         if (rc == quic::Ok) {
             break;
