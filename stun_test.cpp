@@ -16,6 +16,7 @@
 #include <span>
 #include <map>
 #include <mutex>
+#include <tuple>
 #include <unordered_map>
 #include <vector>
 #include <ctime>
@@ -279,6 +280,10 @@ static int loss(int rtt1, int rtt2)
     return rtt1*rtt1 + rtt2*rtt2;
 }
 
+// 双方 RTT 均低于此阈值视为「够快」：优先于慢档，档内再按路径总时延(sum)选；
+// 同分用 loss(L2) 破平，偏向双侧更均衡的节点。
+constexpr int kBothFastRttMs = 200;
+
 static std::string normalizeNodeIp(const std::string& value)
 {
     auto ip = value;
@@ -300,23 +305,31 @@ static std::string normalizeNodeIp(const std::string& value)
 
 string FindBestNode(const vector<pair<string, int>>& rtts1, vector<pair<string, int>> rtts2)
 {
-    map<int, string> lossMap;
+    // key: (档位 0=双方够快 / 1=否则, 主分, 破平分)；越小越优
+    map<tuple<int, int, int>, string> priorityMap;
     for (const auto& [ipRaw, rtt] : rtts1) {
         auto ip = normalizeNodeIp(ipRaw);
         auto it = std::find_if(rtts2.begin(), rtts2.end(), [&ip](const pair<string, int>& p) {
             return normalizeNodeIp(p.first) == ip;
         });
         if (it != rtts2.end()) {
-            int l = loss(rtt, it->second);
-            DBG("Node %s, rtt [%d, %d], loss=%d", ip.c_str(), rtt, it->second, l);
-            lossMap[l] = ip;
+            const int rtt2 = it->second;
+            const int l2 = loss(rtt, rtt2);
+            const int sum = rtt + rtt2;
+            const bool bothFast = rtt < kBothFastRttMs && rtt2 < kBothFastRttMs;
+            // 快档：主分=sum（压总时延），破平=loss；慢档：主分=loss，破平=sum
+            const auto key = bothFast ? tuple{0, sum, l2} : tuple{1, l2, sum};
+            DBG("Node %s, rtt [%d, %d], loss=%d, sum=%d, tier=%d",
+                ip.c_str(), rtt, rtt2, l2, sum, bothFast ? 0 : 1);
+            // try_emplace：主分+破平仍相同则保留先写入者，避免遍历顺序覆盖
+            priorityMap.try_emplace(key, ip);
             rtts2.erase(it);
         }
     }
-    if (lossMap.empty()) {
+    if (priorityMap.empty()) {
         return {};
     }
-    return lossMap.begin()->second;
+    return priorityMap.begin()->second;
 }
 
 #ifdef BUILD_STUN_TEST
