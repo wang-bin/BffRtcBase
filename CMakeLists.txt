@@ -22,10 +22,11 @@ endif()
 add_definitions(-DJSON_NOEXCEPTION)
 
 # libev backends (epoll/kqueue/...) are #included by ev.c — do not compile them separately
+set(LIBEV_DIR ${CMAKE_CURRENT_SOURCE_DIR}/quic/libev)
 add_library(libev OBJECT
-    libev/ev.c
+    ${LIBEV_DIR}/ev.c
 )
-target_include_directories(libev PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/libev)
+target_include_directories(libev PUBLIC ${LIBEV_DIR}/include)
 
 add_library(quic OBJECT
     quic/src/conn.cc
@@ -34,7 +35,7 @@ add_library(quic OBJECT
 )
 target_include_directories(quic PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/quic/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/libev
+    ${LIBEV_DIR}/include
 )
 
 add_library(${PROJECT_NAME} MODULE
