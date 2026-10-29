@@ -77,6 +77,12 @@ private:
     uint64_t update_generation_ = 0;
     bool update_pending_ = false;
     std::optional<std::string> recent_best_node_result_;
+    struct EarlyResult {
+        std::string node;
+        std::vector<std::string> nodes;
+        std::string ip;
+    };
+    std::optional<EarlyResult> early_result_;
 
     std::mutex connect_cancel_mtx_;
     std::shared_ptr<std::atomic_bool> connect_cancel_;

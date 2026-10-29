@@ -104,6 +104,26 @@ JSPPRTC_JNI_S(jobjectArray, StunUtil_nativeSortStunServers, jobjectArray jserver
     return static_cast<jobjectArray>(jmi::detail::to_jarray(env, rows));
 }
 
+JSPPRTC_JNI_S(jobjectArray, StunUtil_nativeSortStunServersWithFirstResult, jobjectArray jservers, jint timeoutMs, jobject callback) {
+    const auto callbackClass = env->GetObjectClass(callback);
+    const auto onResult = env->GetMethodID(callbackClass, "onResult", "(Ljava/lang/String;I)V");
+    env->DeleteLocalRef(callbackClass);
+    if (!onResult) return nullptr;
+    // 回调与本次 native 调用处于同一线程，仅提前通知，不终止完整测速。
+    auto sorted = SortStun(to_servers(env, jservers), timeoutMs, nullptr, [&](const auto& result) {
+        auto node = env->NewStringUTF(result.first.c_str());
+        env->CallVoidMethod(callback, onResult, node, static_cast<jint>(result.second));
+        env->DeleteLocalRef(node);
+    });
+    if (env->ExceptionCheck() || sorted.empty()) return nullptr;
+    vector<jmi::android::util::Pair> rows;
+    rows.reserve(sorted.size());
+    for (const auto& item : sorted) {
+        rows.push_back(jmi::android::util::Pair::of(item.first, item.second));
+    }
+    return static_cast<jobjectArray>(jmi::detail::to_jarray(env, rows));
+}
+
 JSPPRTC_JNI_S(jstring, StunUtil_nativeFindBestNode, jobjectArray jRtts1, jobjectArray jRtts2) {
     vector<pair<string, int>> rtts1, rtts2;
     to_rtts(rtts1, env, jRtts1);

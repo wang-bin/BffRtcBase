@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <sys/socket.h>
 #include <fcntl.h>
+#include <functional>
 #include <poll.h>
 #include <unistd.h>
 #include <algorithm>
@@ -126,7 +127,8 @@ bool parse(const StunResponse& resp, const transaction_idt& tid, string* clientI
     return false;
 }
 
-vector<std::pair<string, int>> SortStun(const span<IPAndPort>& servers, int timeoutMs, string* clientIp = nullptr, bool fastestOnly = false) {
+vector<std::pair<string, int>> SortStun(const span<IPAndPort>& servers, int timeoutMs, string* clientIp = nullptr, bool fastestOnly = false,
+                                       const function<void(const pair<string, int>&)>& onFirstResult = {}) {
     if (servers.empty()) {
         DBG("No valid STUN server");
         return {};
@@ -214,6 +216,9 @@ vector<std::pair<string, int>> SortStun(const span<IPAndPort>& servers, int time
             *clientIp = cip;
         DBG("client ip from stun %s: %s, elapsed: %lldms", key.data(), cip.c_str(), elapsed);
         sorted.emplace_back(key, elapsed);
+        if (sorted.size() == 1 && onFirstResult) {
+            onFirstResult(sorted.front());
+        }
         if (sorted.size() == servers.size()) {
             break;
         }
@@ -273,6 +278,13 @@ vector<std::pair<string, int>> SortStun(const set<string>& servers, int timeoutM
 {
     auto ipPorts = toIpPorts(servers);
     return SortStun(ipPorts, timeoutMs, clientIp);
+}
+
+vector<std::pair<string, int>> SortStun(const set<string>& servers, int timeoutMs, string* clientIp,
+                                       const function<void(const pair<string, int>&)>& onFirstResult)
+{
+    auto ipPorts = toIpPorts(servers);
+    return SortStun(ipPorts, timeoutMs, clientIp, false, onFirstResult);
 }
 
 static int loss(int rtt1, int rtt2)

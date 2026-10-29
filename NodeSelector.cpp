@@ -139,6 +139,7 @@ uint64_t NodeSelector::beginUpdate() {
     std::lock_guard<std::mutex> lock(update_nodes_mtx_);
     ++update_generation_;
     update_pending_ = true;
+    early_result_.reset();
     recent_best_node_result_.reset();
     return update_generation_;
 }
@@ -150,6 +151,7 @@ void NodeSelector::finishUpdate(uint64_t generation) {
             return;
         }
         recent_best_node_result_.reset();
+        early_result_.reset();
         update_pending_ = false;
     }
     update_nodes_cv_.notify_all();
@@ -170,7 +172,16 @@ void NodeSelector::asyncSort(const std::vector<std::string>& nodesWithPort,
 
         const auto start = std::chrono::steady_clock::now();
         bool save = true;
-        auto ret = SortStun(servers, 2000, nullptr);
+        auto ret = SortStun(servers, 2000, nullptr, [&](const auto& result) {
+            if (!updateGeneration) return;
+            std::unique_lock lock(update_nodes_mtx_);
+            if (*updateGeneration != update_generation_ || !update_pending_) return;
+            EarlyResult early{.node = result.first, .nodes = {}, .ip = ipCopy};
+            for (const auto& node : nodesCopy) early.nodes.push_back(hostFromAddr(node));
+            early_result_ = std::move(early);
+            lock.unlock();
+            update_nodes_cv_.notify_all();
+        });
         const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                                     std::chrono::steady_clock::now() - start)
                                     .count();
@@ -215,6 +226,7 @@ void NodeSelector::asyncSort(const std::vector<std::string>& nodesWithPort,
                 recent_best_node_result_ = ret.front().first;
             }
             if (tracked) {
+                early_result_.reset();
                 update_pending_ = false;
             }
         }
@@ -399,9 +411,10 @@ void NodeSelector::testBestUrl(const std::string& serverUrl, BestUrlCallback com
     {
         std::unique_lock<std::mutex> lock(update_nodes_mtx_);
         update_nodes_cv_.wait_for(lock, std::chrono::milliseconds(2000), [this] {
-            return !update_pending_;
+            return !update_pending_ || early_result_.has_value();
         });
-        timedOut = update_pending_;
+        const bool early = update_pending_ && early_result_.has_value();
+        timedOut = update_pending_ && !early;
         if (!timedOut) {
             recentBestNode = recent_best_node_result_;
         }
@@ -410,12 +423,17 @@ void NodeSelector::testBestUrl(const std::string& serverUrl, BestUrlCallback com
         savedIp = cache().ip;
         savedNodes = cache().nodes;
         cache().server_ip = oldHost;
+        if (early) {
+            recentBestNode = early_result_->node;
+            savedIp = early_result_->ip;
+            savedNodes = early_result_->nodes;
+        }
 
         // Match the wrapper behavior: only reuse a best node when this signal
         // host is present in the cached node list. Snapshot under the update
         // lock so a late result cannot affect this selection after timeout.
         contains = std::find(savedNodes.begin(), savedNodes.end(), oldHost) != savedNodes.end();
-        if (!contains && !timedOut) {
+        if (!contains && !timedOut && !early) {
             cache().best_node.clear();
             cache().best_rtt = 0;
             cache().nodes.clear();
