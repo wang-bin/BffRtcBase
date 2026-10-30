@@ -94,8 +94,37 @@ static restincurl::Client& client()
     return c;
 }
 
-HttpClient::Result from(const restincurl::Result& r)
+static const char* httpVersionName(long v)
 {
+    switch (v) {
+    case CURL_HTTP_VERSION_1_0: return "1.0";
+    case CURL_HTTP_VERSION_1_1: return "1.1";
+    case CURL_HTTP_VERSION_2_0: return "2";
+    case CURL_HTTP_VERSION_3: return "3";
+    default: return "?";
+    }
+}
+
+// 仅取 path，去掉 query/fragment，避免日志带上 token。
+// 先定 ?/# 边界，再找 path，避免 query 内的 / 被当成路径（如 ?redirect=/x&token=）。
+static string urlPath(const string& url)
+{
+    const auto scheme = url.find("://");
+    const auto authStart = scheme == string::npos ? size_t{0} : scheme + 3;
+    const auto queryOrFrag = url.find_first_of("?#", authStart);
+    const auto authEnd = queryOrFrag == string::npos ? url.size() : queryOrFrag;
+    const auto start = url.find('/', authStart);
+    if (start == string::npos || start >= authEnd) {
+        return "/";
+    }
+    return url.substr(start, authEnd - start);
+}
+
+HttpClient::Result from(const restincurl::Result& r, const string& path)
+{
+    LOGD("%s response=%ld http=%s rtt=%lldms body=%lldms",
+         path.c_str(), r.http_response_code, httpVersionName(r.http_version),
+         (long long)(r.request_rtt_us / 1000), (long long)(r.response_body_elapsed_us / 1000));
     return {
                 .httpCode = (int)r.http_response_code,
                 .bytesSent = (int)r.bytes_sent,
@@ -118,6 +147,13 @@ public:
         }
         if (connectTimeout > 0) {
             b.ConnectTimeout(connectTimeout);
+        }
+        // 优先 HTTP/3（有 TCP 回退）；curl 未编 HTTP3 或 Config 关闭时保持默认 H1/H2
+        if (bff::Config::Shared().http3) {
+            if (auto* vi = curl_version_info(CURLVERSION_NOW);
+                vi && (vi->features & CURL_VERSION_HTTP3)) {
+                b.Option(CURLOPT_HTTP_VERSION, (long)CURL_HTTP_VERSION_3);
+            }
         }
         return b
             //.Option(CURLOPT_SSL_OPTIONS, (long)CURLSSLOPT_NATIVE_CA)
@@ -143,12 +179,13 @@ public:
             b.Option(CURLOPT_RESOLVE, resolve_list);
         }
 
-        b.WithCompletion([cb = std::move(cb), resolve_list](const restincurl::Result& r) mutable {
+        const auto path = urlPath(prepared.url);
+        b.WithCompletion([cb = std::move(cb), resolve_list, path](const restincurl::Result& r) mutable {
             if (resolve_list) {
                 curl_slist_free_all(resolve_list);
             }
             if (cb) {
-                cb(from(r));
+                cb(from(r, path));
             }
         });
         b.Execute();

@@ -236,6 +236,8 @@ namespace restincurl {
 
         /*! The HTTP result code for the request */
         long http_response_code = {};
+        /*! Negotiated HTTP version (CURL_HTTP_VERSION_*); 0 if unknown. */
+        long http_version = {};
         curl_off_t bytes_sent = 0;
         curl_off_t request_rtt_us = 0;
         curl_off_t response_body_elapsed_us = 0;
@@ -538,6 +540,7 @@ namespace restincurl {
 
             curl_easy_getinfo (*eh_, CURLINFO_RESPONSE_CODE,
                                &result.http_response_code);
+            curl_easy_getinfo(*eh_, CURLINFO_HTTP_VERSION, &result.http_version);
             curl_easy_getinfo(*eh_, CURLINFO_SIZE_UPLOAD_T, &result.bytes_sent);
             curl_off_t pretransfer_us = 0;
             curl_off_t starttransfer_us = 0;

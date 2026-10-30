@@ -71,6 +71,8 @@ public:
     // ip -> host mapping for SNI and cert validation.
     std::unordered_map<std::string, std::string> hosts;
     bool sni = false;
+    // Prefer HTTP/3 (CURL_HTTP_VERSION_3 with TCP fallback). Default on.
+    bool http3 = true;
 
     // Sent on join (signaling); not WebRTC PeerConnection config.
     RtcIcePolicy icePolicy = RtcIcePolicy::All;
