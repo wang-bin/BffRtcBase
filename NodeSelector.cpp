@@ -66,6 +66,59 @@ static std::string hostFromAddr(const std::string& addr) {
     return s;
 }
 
+// 从入口地址解析显式端口；无端口时返回 0（HTTPS 默认 443）。
+static uint16_t portFromAddr(const std::string& addr) {
+    std::string s = addr;
+    const auto scheme = s.find("://");
+    if (scheme != std::string::npos) {
+        s = s.substr(scheme + 3);
+    } else {
+        // Support proto:host:port (without //).
+        const auto firstColon = s.find(':');
+        const auto lastColon = s.rfind(':');
+        if (firstColon != std::string::npos && lastColon != std::string::npos && lastColon > firstColon) {
+            s = s.substr(firstColon + 1);
+        }
+    }
+    const auto slash = s.find('/');
+    if (slash != std::string::npos) {
+        s = s.substr(0, slash);
+    }
+    std::string portStr;
+    if (!s.empty() && s.front() == '[') {
+        const auto rb = s.find(']');
+        if (rb != std::string::npos && rb + 1 < s.size() && s[rb + 1] == ':') {
+            portStr = s.substr(rb + 2);
+        }
+    } else if (const auto colon = s.rfind(':'); colon != std::string::npos) {
+        portStr = s.substr(colon + 1);
+    }
+    if (portStr.empty()) {
+        return 0;
+    }
+    unsigned long p = 0;
+    for (char c : portStr) {
+        if (c < '0' || c > '9') {
+            return 0;
+        }
+        p = p * 10 + static_cast<unsigned long>(c - '0');
+        if (p > 65535) {
+            return 0;
+        }
+    }
+    return p > 0 ? static_cast<uint16_t>(p) : 0;
+}
+
+// nodelist 端口与 server 参数一致；未写端口时走 HTTPS 默认 443。
+static std::string nodelistUrlFromServer(const std::string& server) {
+    const auto host = hostFromAddr(server);
+    const auto port = portFromAddr(server);
+    if (port > 0) {
+        return std::string("https://") + host + ":" + std::to_string(port) + "/nodelist";
+    }
+    return std::string("https://") + host + "/nodelist";
+}
+
 static std::string replaceHost(const std::string& url, const std::string& oldHost, const std::string& newHost) {
     if (oldHost.empty()) return url;
     auto out = url;
@@ -306,8 +359,7 @@ void NodeSelector::updateNodesInternal(const std::string& server,
                                        const std::string* token,
                                        uint64_t generation,
                                        CompletionCallback completionHandler) {
-    const auto host = hostFromAddr(server);
-    const auto url = std::string("https://") + host + ":7202/nodelist";
+    const auto url = nodelistUrlFromServer(server);
 
     HttpClient hc;
     if (token && !token->empty()) {
