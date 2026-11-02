@@ -27,6 +27,8 @@ let package = Package(
                 .product(name: "JsppRTCQuic", package: "quic"),
                 .product(name: "curl", package: "webrtc-7871-ios"),
                 .product(name: "openssl", package: "webrtc-7871-ios"),
+                .product(name: "ngtcp2", package: "webrtc-7871-ios"),
+                .product(name: "nghttp3", package: "webrtc-7871-ios"),
             ],
             path: ".",
             exclude: [
