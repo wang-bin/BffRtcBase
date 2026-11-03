@@ -58,7 +58,7 @@ private:
     void asyncSort(const std::vector<std::string>& nodesWithPort,
                    const std::string* ip,
                    std::optional<uint64_t> updateGeneration = std::nullopt);
-    uint64_t beginUpdate();
+    uint64_t beginUpdate(std::optional<std::string> directServer);
     void finishUpdate(uint64_t generation);
     void testBestUrl(const std::string& serverUrl, BestUrlCallback completionHandler);
     void setConnectCancelFlag(std::shared_ptr<std::atomic_bool> cancel);
@@ -76,6 +76,8 @@ private:
     std::condition_variable update_nodes_cv_;
     uint64_t update_generation_ = 0;
     bool update_pending_ = false;
+    // 空字符串使用原信令 URL，nullopt 走测速选址。
+    std::optional<std::string> direct_server_;
     std::optional<std::string> recent_best_node_result_;
     struct EarlyResult {
         std::string node;

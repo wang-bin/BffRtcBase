@@ -20,6 +20,8 @@
 #define TAG "nodes"
 namespace bff {
 
+using namespace std;
+
 using json = nlohmann::json;
 
 static constexpr const char* kComponent = "nodes";
@@ -188,8 +190,9 @@ void NodeSelector::cancelConnectOperation() {
     setConnectCancelFlag(nullptr);
 }
 
-uint64_t NodeSelector::beginUpdate() {
+uint64_t NodeSelector::beginUpdate(optional<string> directServer) {
     std::lock_guard<std::mutex> lock(update_nodes_mtx_);
+    direct_server_ = std::move(directServer);
     ++update_generation_;
     update_pending_ = true;
     early_result_.reset();
@@ -299,12 +302,18 @@ void NodeSelector::asyncSort(const std::vector<std::string>& nodesWithPort,
 void NodeSelector::updateNodes(const std::vector<std::string>& servers,
                                const std::string* token,
                                CompletionCallback completionHandler) {
+    const auto generation = beginUpdate(servers.size() <= 1 ? optional<string>(servers.empty() ? "" : hostFromAddr(servers.front())) : nullopt);
     if (servers.empty()) {
+        finishUpdate(generation);
         WARN("empty servers");
         if (completionHandler) completionHandler();
         return;
     }
-    const auto generation = beginUpdate();
+    if (servers.size() == 1) {
+        const vector<string> extraServers{hostFromAddr(servers.front()) + ":3478"};
+        updateNodesInternal(servers.front(), &extraServers, token, generation, std::move(completionHandler));
+        return;
+    }
 
     // Use the cached best node as an extra bootstrap candidate and bound STUN wait to 300ms.
     std::vector<std::string> ss;
@@ -350,7 +359,7 @@ void NodeSelector::updateNodes(const std::vector<std::string>& servers,
 }
 
 void NodeSelector::updateNodes(const std::string& server, CompletionCallback completionHandler) {
-    const auto generation = beginUpdate();
+    const auto generation = beginUpdate(hostFromAddr(server));
     updateNodesInternal(server, nullptr, nullptr, generation, std::move(completionHandler));
 }
 
@@ -441,6 +450,18 @@ void NodeSelector::getBestUrl(const std::string& serverUrl, BestUrlCallback comp
 
     if (Config::Shared().signal.server) {
         const auto bestUrl = replaceHost(serverUrl, oldHost, *Config::Shared().signal.server);
+        completionHandler(bestUrl, &hostsCopy);
+        return;
+    }
+
+    optional<string> directServer;
+    {
+        lock_guard lock(update_nodes_mtx_);
+        directServer = direct_server_;
+    }
+    if (directServer) {
+        DBG("Use direct signal server from updateNodes");
+        const auto bestUrl = directServer->empty() ? serverUrl : replaceHost(serverUrl, oldHost, *directServer);
         completionHandler(bestUrl, &hostsCopy);
         return;
     }
