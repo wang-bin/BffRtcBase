@@ -235,6 +235,7 @@ void NodeSelector::asyncSort(const std::vector<std::string>& nodesWithPort,
             EarlyResult early{.node = result.first, .nodes = {}, .ip = ipCopy};
             for (const auto& node : nodesCopy) early.nodes.push_back(hostFromAddr(node));
             early_result_ = std::move(early);
+            DBG("early node result: %s, rtt: %dms", result.first.c_str(), result.second);
             lock.unlock();
             update_nodes_cv_.notify_all();
         });
