@@ -29,6 +29,7 @@ let package = Package(
                 .product(name: "openssl", package: "webrtc-7871-ios"),
                 .product(name: "ngtcp2", package: "webrtc-7871-ios"),
                 .product(name: "nghttp3", package: "webrtc-7871-ios"),
+                .product(name: "zstd", package: "webrtc-7871-ios"),
             ],
             path: ".",
             exclude: [
@@ -54,6 +55,7 @@ let package = Package(
                 "SignalChannel.cpp",
                 "SniUrl.cpp",
                 "WebSocket.cpp",
+                "ZstdCodec.cpp",
                 "laser-ca.der.c",
                 "protobuf-c/protobuf-c.c",
                 "rtc.pb-c.c",

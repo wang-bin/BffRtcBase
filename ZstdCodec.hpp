@@ -1,0 +1,57 @@
+#pragma once
+
+#include <cstddef>
+#include <cstdint>
+#include <mutex>
+#include <span>
+#include <string>
+#include <string_view>
+#include <vector>
+
+namespace bff {
+
+// SDP / signaling zstd codec aligned with client-sdk-js Zstd.ts:
+// - dict magic 37 A4 30 EC; optional compressed dict (frame magic 28 B5 2F FD)
+// - MD5 is over compressed blob when present, else raw dict
+// - level default 3; encode may use dictionary when installed
+class Zstd {
+public:
+    static Zstd& shared();
+
+    explicit Zstd(int level = 3);
+    ~Zstd();
+
+    Zstd(const Zstd&) = delete;
+    Zstd& operator=(const Zstd&) = delete;
+
+    static constexpr const char* kCodecName = "zstd";
+    const char* codecName() const noexcept { return kCodecName; }
+
+    // Install dictionary. Accepts raw zstd dict or zstd-framed compressed dict.
+    // Empty input clears the dictionary. Returns false on invalid input (state unchanged).
+    bool setDict(std::span<const uint8_t> dict);
+    void clearDict();
+
+    std::string dictMd5() const;
+    bool hasDict() const;
+    std::vector<uint8_t> dictData() const;
+    std::vector<uint8_t> dictZData() const;
+
+    std::vector<uint8_t> encode(std::span<const uint8_t> input, bool useDict = true) const;
+    std::vector<uint8_t> encode(std::string_view input, bool useDict = true) const;
+    std::string decode(std::span<const uint8_t> input) const;
+
+private:
+    static bool startsWith(std::span<const uint8_t> data, std::span<const uint8_t> magic) noexcept;
+    static std::string md5Hex(std::span<const uint8_t> data);
+
+    mutable std::mutex mtx_;
+    int level_ = 3;
+    std::vector<uint8_t> dict_;
+    std::vector<uint8_t> dict_z_;
+    std::string dict_hash_;
+    void* cctx_ = nullptr; // ZSTD_CCtx*
+    void* dctx_ = nullptr; // ZSTD_DCtx*
+};
+
+} // namespace bff

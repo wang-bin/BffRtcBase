@@ -55,6 +55,7 @@ add_library(${PROJECT_NAME} MODULE
     SniUrl.cpp
     stun_test.cpp
     WebSocket.cpp
+    ZstdCodec.cpp
 )
 #set_target_properties(${PROJECT_NAME} PROPERTIES INTERPROCEDURAL_OPTIMIZATION ON) # CMAKE_ANDROID_NDK_VERSION not defined, will use gold linker
 target_link_libraries(${PROJECT_NAME} PRIVATE libev quic z)
@@ -72,6 +73,7 @@ if(ANDROID)
     curl_websocket_jni.cpp
     quic_websocket_jni.cpp
     curl_http_jni.cpp
+    zstd_jni.cpp
     jmi.cpp
     java.lang.Object.cpp
     java.lang.Integer.cpp
@@ -82,7 +84,7 @@ if(ANDROID)
   if(EXISTS ${LIBS_DIR}/include)
     include_directories(${LIBS_DIR}/include)
     target_link_directories(${PROJECT_NAME} PRIVATE ${LIBS_DIR}/${CMAKE_ANDROID_ARCH_ABI})
-    target_link_libraries(${PROJECT_NAME} PRIVATE curl ssl crypto ngtcp2 ngtcp2_crypto_boringssl nghttp3)
+    target_link_libraries(${PROJECT_NAME} PRIVATE curl ssl crypto ngtcp2 ngtcp2_crypto_boringssl nghttp3 zstd)
   endif()
 endif()
 if(IOS)
@@ -92,17 +94,20 @@ if(IOS)
   find_library(NGTCP2 NAMES ngtcp2 PATHS "${LIBS_DIR}" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
   find_library(NGHTTP3 NAMES nghttp3 PATHS "${LIBS_DIR}" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
   find_library(CURL NAMES curl PATHS "${LIBS_DIR}" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
+  find_library(ZSTD NAMES zstd PATHS "${LIBS_DIR}" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
   find_xcframework(OPENSSL_XCFW "${OPENSSL}")
   find_xcframework(NGTCP2_XCFW "${NGTCP2}")
   find_xcframework(NGHTTP3_XCFW "${NGHTTP3}")
   find_xcframework(CURL_XCFW "${CURL}")
+  find_xcframework(ZSTD_XCFW "${ZSTD}")
   target_compile_options(quic PRIVATE "${OPENSSL_XCFW_CFLAGS}" "${NGTCP2_XCFW_CFLAGS}" "${CURL_XCFW_CFLAGS}")
-  target_compile_options(${PROJECT_NAME} PRIVATE "${CURL_XCFW_CFLAGS}" "${OPENSSL_XCFW_CFLAGS}")
+  target_compile_options(${PROJECT_NAME} PRIVATE "${CURL_XCFW_CFLAGS}" "${OPENSSL_XCFW_CFLAGS}" "${ZSTD_XCFW_CFLAGS}")
   target_link_libraries(quic PUBLIC "${OPENSSL_XCFW_LFLAGS}" "${NGTCP2_XCFW_LFLAGS}" "${CURL_XCFW_LFLAGS}")
   # curl HTTP/3 依赖 ngtcp2/nghttp3；一并链入 rtcbase
   target_link_libraries(${PROJECT_NAME} PRIVATE
     "${CURL_XCFW_LFLAGS}"
     "${OPENSSL_XCFW_LFLAGS}"
     "${NGTCP2_XCFW_LFLAGS}"
-    "${NGHTTP3_XCFW_LFLAGS}")
+    "${NGHTTP3_XCFW_LFLAGS}"
+    "${ZSTD_XCFW_LFLAGS}")
 endif()
