@@ -58,6 +58,7 @@ struct SignalOptions {
     int reconnectMaxTimes = 9999;
     int responseTimeout = 2000;
     bool autoSubscribe = true;
+    bool compression = false;
 };
 
 class Config {
