@@ -1,6 +1,7 @@
 #if (__ANDROID__ + 0)
 #include <jni.h>
 
+#include <string>
 #include <vector>
 
 #include "ZstdCodec.hpp"
@@ -103,6 +104,31 @@ JSPPRTC_JNI(jstring, ZstdCodec_nativeDecode, jbyteArray input)
     vector<uint8_t> bytes(static_cast<size_t>(len));
     env->GetByteArrayRegion(input, 0, len, reinterpret_cast<jbyte*>(bytes.data()));
     const auto out = bff::Zstd::shared().decode(bytes);
+    return env->NewStringUTF(out.c_str());
+}
+
+// 对齐 iOS / bff::Zstd::resolveSdp：明文优先，否则解压 sdpZ（含 decode 成功日志）。
+JSPPRTC_JNI(jstring, ZstdCodec_nativeResolveSdp, jstring sdp, jbyteArray sdpZ)
+{
+    string plain;
+    if (sdp) {
+        const char* utf = env->GetStringUTFChars(sdp, nullptr);
+        if (utf) {
+            plain = utf;
+            env->ReleaseStringUTFChars(sdp, utf);
+        }
+    }
+
+    vector<uint8_t> zbytes;
+    if (sdpZ) {
+        const auto len = env->GetArrayLength(sdpZ);
+        if (len > 0) {
+            zbytes.resize(static_cast<size_t>(len));
+            env->GetByteArrayRegion(sdpZ, 0, len, reinterpret_cast<jbyte*>(zbytes.data()));
+        }
+    }
+
+    const auto out = bff::Zstd::resolveSdp(plain, zbytes);
     return env->NewStringUTF(out.c_str());
 }
 
