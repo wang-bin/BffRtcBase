@@ -67,11 +67,6 @@ JSPPRTC_JNI(jboolean, ZstdCodec_nativeLoadCachedDict)
     return bff::Zstd::shared().loadCachedDict() ? JNI_TRUE : JNI_FALSE;
 }
 
-JSPPRTC_JNI(jboolean, ZstdCodec_nativeSaveCachedDict)
-{
-    return bff::Zstd::shared().saveCachedDict() ? JNI_TRUE : JNI_FALSE;
-}
-
 JSPPRTC_JNI(jbyteArray, ZstdCodec_nativeEncode, jbyteArray input, jboolean useDict)
 {
     if (!input) {

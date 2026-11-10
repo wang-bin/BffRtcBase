@@ -75,11 +75,7 @@ string Zstd::md5Hex(span<const uint8_t> data) {
     return out;
 }
 
-bool Zstd::setDict(span<const uint8_t> dict) {
-    if (dict.empty()) {
-        clearDict();
-        return true;
-    }
+bool Zstd::installDict(span<const uint8_t> dict) {
     if (dict.size() < 4) {
         ERROR("invalid zstd dictionary: too short (%zu)", dict.size());
         return false;
@@ -121,11 +117,38 @@ bool Zstd::setDict(span<const uint8_t> dict) {
     return true;
 }
 
+bool Zstd::setDict(span<const uint8_t> dict) {
+    if (dict.empty()) {
+        clearDict();
+        return true;
+    }
+    if (!installDict(dict)) {
+        return false;
+    }
+    // 已 setCacheDir 时自动落盘；目录为空则 no-op
+    saveCachedDict();
+    return true;
+}
+
 void Zstd::clearDict() {
-    lock_guard lock(mtx_);
-    dict_.clear();
-    dict_z_.clear();
-    dict_hash_.clear();
+    string path;
+    {
+        lock_guard lock(mtx_);
+        dict_.clear();
+        dict_z_.clear();
+        dict_hash_.clear();
+        if (!cache_dir_.empty()) {
+            path = (fs::path(cache_dir_) / kDictFileName).string();
+        }
+    }
+    if (path.empty()) {
+        return;
+    }
+    error_code ec;
+    if (fs::remove(path, ec)) {
+        INFO("zstd removed cached dict path=%s", path.c_str());
+    }
+    fs::remove(path + ".tmp", ec);
 }
 
 string Zstd::dictMd5() const {
@@ -233,7 +256,8 @@ bool Zstd::loadCachedDict() {
         ERROR("zstd load cached dict truncated path=%s", path.c_str());
         return false;
     }
-    if (!setDict(data)) {
+    // 走 installDict：只装内存，避免 load 后再回写同一文件
+    if (!installDict(data)) {
         ERROR("zstd load cached dict rejected, size=%zu path=%s", data.size(), path.c_str());
         return false;
     }

@@ -573,13 +573,17 @@ struct  Rtc__Compression
 {
   ProtobufCMessage base;
   /*
-   * Zstandard 字典数据，字典未压缩或已压缩，客户端应该根据头部自动判断是否需要解压缩
+   * 字典数据，字典本身未压缩或已压缩，客户端应该根据头部自动判断是否需要解压缩字典本身
    */
-  ProtobufCBinaryData zstd_dict;
+  ProtobufCBinaryData dict;
+  /*
+   * 不使用字典
+   */
+  protobuf_c_boolean no_dict;
 };
 #define RTC__COMPRESSION__INIT \
  { PROTOBUF_C_MESSAGE_INIT (&rtc__compression__descriptor) \
-, {0,NULL} }
+, {0,NULL}, 0 }
 
 
 /*
@@ -1394,7 +1398,7 @@ struct  Rtc__Stats
   /*
    * 媒体传输协议 (如 UDP/TCP)
    */
-  Rtc__Protocol media_protocol;
+  Rtc__Protocol protocol;
   /*
    * 媒体节点 ID，可由服务端填写
    */
@@ -1416,7 +1420,7 @@ struct  Rtc__Stats
    */
   uint32_t media_port;
   /*
-   * 平均媒体通道往返时间 (Media RTT)，单位：毫秒
+   * 媒体通道往返时间平均值 (Media RTT)，单位：毫秒
    */
   uint32_t media_rtt;
   /*
@@ -1519,10 +1523,14 @@ struct  Rtc__Stats
    * 是否选中通道（模式）
    */
   protobuf_c_boolean hit;
+  /*
+   * 记录创建时间，由服务端填写
+   */
+  int64_t create_time;
 };
 #define RTC__STATS__INIT \
  { PROTOBUF_C_MESSAGE_INIT (&rtc__stats__descriptor) \
-, 0, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, RTC__SOURCE__SOURCE_SERVER, RTC__DATA_TYPE__DATA_TYPE_UNKNOWN, RTC__DIRECTION__DIRECTION_UNKNOWN, 0, 0, 0, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, 0, 0, RTC__PROTOCOL__PROTOCOL_UNKNOWN, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, 0, (char *)protobuf_c_empty_string, 0, 0, (char *)protobuf_c_empty_string, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, RTC__ROLE__ROLE_NONE, 0 }
+, 0, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, RTC__SOURCE__SOURCE_SERVER, RTC__DATA_TYPE__DATA_TYPE_UNKNOWN, RTC__DIRECTION__DIRECTION_UNKNOWN, 0, 0, 0, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, 0, 0, RTC__PROTOCOL__PROTOCOL_UNKNOWN, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, 0, (char *)protobuf_c_empty_string, 0, 0, (char *)protobuf_c_empty_string, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, RTC__ROLE__ROLE_NONE, 0, 0 }
 
 
 /* Rtc__SignalRequest methods */

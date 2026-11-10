@@ -1698,17 +1698,22 @@ void Signal::handleReceiveSignalResponse(const Rtc__SignalResponse* signalRespon
             HttpClient::setAuthToken(d->token);
             break;
         case RTC__SIGNAL_RESPONSE__MESSAGE_COMPRESSION: {
-            // 服务端下发 zstd 字典：安装到内存并落盘，供下次 start 填 zd=
+            // 服务端下发 zstd 字典：setDict 成功后自动落盘，供下次 start 填 zd=
             const auto* compression = signalResponse->compression;
             if (!compression) {
                 break;
             }
-            const auto& bin = compression->zstd_dict;
+            // no_dict：服务端要求本会话不使用字典
+            if (compression->no_dict) {
+                INFO("%s compression: no_dict", prefix.c_str());
+                Zstd::shared().clearDict();
+                break;
+            }
+            const auto& bin = compression->dict;
             LOGD("%s compression: len=%zu", prefix.c_str(), bin.len);
             span<const uint8_t> dict{reinterpret_cast<const uint8_t*>(bin.data), bin.len};
             if (Zstd::shared().setDict(dict)) {
                 const auto md5 = Zstd::shared().dictMd5();
-                Zstd::shared().saveCachedDict();
                 INFO("%s compression dict set, size=%zu md5=%s", prefix.c_str(), bin.len, md5.c_str());
             } else {
                 ERROR("%s compression dict rejected, size=%zu", prefix.c_str(), bin.len);

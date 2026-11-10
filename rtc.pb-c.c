@@ -2126,15 +2126,27 @@ const ProtobufCMessageDescriptor rtc__signal_response__descriptor =
   (ProtobufCMessageInit) rtc__signal_response__init,
   NULL,NULL,NULL    /* reserved[123] */
 };
-static const ProtobufCFieldDescriptor rtc__compression__field_descriptors[1] =
+static const ProtobufCFieldDescriptor rtc__compression__field_descriptors[2] =
 {
   {
-    "zstd_dict",
+    "dict",
     1,
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_BYTES,
     0,   /* quantifier_offset */
-    offsetof(Rtc__Compression, zstd_dict),
+    offsetof(Rtc__Compression, dict),
+    NULL,
+    NULL,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+  {
+    "no_dict",
+    2,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_BOOL,
+    0,   /* quantifier_offset */
+    offsetof(Rtc__Compression, no_dict),
     NULL,
     NULL,
     0,             /* flags */
@@ -2142,12 +2154,13 @@ static const ProtobufCFieldDescriptor rtc__compression__field_descriptors[1] =
   },
 };
 static const unsigned rtc__compression__field_indices_by_name[] = {
-  0,   /* field[0] = zstd_dict */
+  0,   /* field[0] = dict */
+  1,   /* field[1] = no_dict */
 };
 static const ProtobufCIntRange rtc__compression__number_ranges[1 + 1] =
 {
   { 1, 0 },
-  { 0, 1 }
+  { 0, 2 }
 };
 const ProtobufCMessageDescriptor rtc__compression__descriptor =
 {
@@ -2157,7 +2170,7 @@ const ProtobufCMessageDescriptor rtc__compression__descriptor =
   "Rtc__Compression",
   "rtc",
   sizeof(Rtc__Compression),
-  1,
+  2,
   rtc__compression__field_descriptors,
   rtc__compression__field_indices_by_name,
   1,  rtc__compression__number_ranges,
@@ -4096,7 +4109,7 @@ const ProtobufCMessageDescriptor rtc__select_channel__descriptor =
   (ProtobufCMessageInit) rtc__select_channel__init,
   NULL,NULL,NULL    /* reserved[123] */
 };
-static const ProtobufCFieldDescriptor rtc__stats__field_descriptors[46] =
+static const ProtobufCFieldDescriptor rtc__stats__field_descriptors[47] =
 {
   {
     "id",
@@ -4267,12 +4280,12 @@ static const ProtobufCFieldDescriptor rtc__stats__field_descriptors[46] =
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
   {
-    "media_protocol",
+    "protocol",
     15,
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_ENUM,
     0,   /* quantifier_offset */
-    offsetof(Rtc__Stats, media_protocol),
+    offsetof(Rtc__Stats, protocol),
     &rtc__protocol__descriptor,
     NULL,
     0,             /* flags */
@@ -4650,11 +4663,24 @@ static const ProtobufCFieldDescriptor rtc__stats__field_descriptors[46] =
     0,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
+  {
+    "create_time",
+    47,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_INT64,
+    0,   /* quantifier_offset */
+    offsetof(Rtc__Stats, create_time),
+    NULL,
+    NULL,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
 };
 static const unsigned rtc__stats__field_indices_by_name[] = {
   3,   /* field[3] = app_id */
   24,   /* field[24] = bytes_received */
   23,   /* field[23] = bytes_sent */
+  46,   /* field[46] = create_time */
   5,   /* field[5] = data_type */
   6,   /* field[6] = direction */
   9,   /* field[9] = duration */
@@ -4675,7 +4701,6 @@ static const unsigned rtc__stats__field_indices_by_name[] = {
   18,   /* field[18] = media_ip */
   15,   /* field[15] = media_node_id */
   19,   /* field[19] = media_port */
-  14,   /* field[14] = media_protocol */
   16,   /* field[16] = media_remote_ip */
   17,   /* field[17] = media_remote_port */
   20,   /* field[20] = media_rtt */
@@ -4686,6 +4711,7 @@ static const unsigned rtc__stats__field_indices_by_name[] = {
   27,   /* field[27] = packets_sent */
   1,   /* field[1] = peer_id */
   38,   /* field[38] = pli_count */
+  14,   /* field[14] = protocol */
   44,   /* field[44] = role */
   2,   /* field[2] = room_id */
   33,   /* field[33] = round_trip_time */
@@ -4702,7 +4728,7 @@ static const unsigned rtc__stats__field_indices_by_name[] = {
 static const ProtobufCIntRange rtc__stats__number_ranges[1 + 1] =
 {
   { 1, 0 },
-  { 0, 46 }
+  { 0, 47 }
 };
 const ProtobufCMessageDescriptor rtc__stats__descriptor =
 {
@@ -4712,7 +4738,7 @@ const ProtobufCMessageDescriptor rtc__stats__descriptor =
   "Rtc__Stats",
   "rtc",
   sizeof(Rtc__Stats),
-  46,
+  47,
   rtc__stats__field_descriptors,
   rtc__stats__field_indices_by_name,
   1,  rtc__stats__number_ranges,
