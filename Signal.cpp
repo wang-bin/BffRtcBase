@@ -991,15 +991,13 @@ public:
     };
     std::mutex node_rtts_mtx;
     NodeSelector::Rtts node_rtts;
-    std::set<int> node_rtts_sent_channels;
-    std::set<int> legacy_node_rtts_channels;
     NodeSelector node_selector;
 };
 
 Signal::Signal() : d(std::make_shared<Private>(this)) {
     d->node_selector.setUpdateRttsCallback([d = d](const NodeSelector::Rtts& result) {
         if (!d->owner) return;
-        d->owner->sendNodeRttsToFirstChannel(result);
+        d->owner->sendNodeRttsToChannels(result);
     });
 }
 
@@ -1179,8 +1177,6 @@ void Signal::connectBestUrl(const std::string& serverUrl,
             {
                 std::lock_guard<std::mutex> lock(d->node_rtts_mtx);
                 d->node_rtts.clear();
-                d->node_rtts_sent_channels.clear();
-                d->legacy_node_rtts_channels.clear();
             }
             d->last_offer.clear();
             d->auto_media_join = true;
@@ -1198,57 +1194,35 @@ void Signal::connectBestUrl(const std::string& serverUrl,
         });
 }
 
-void Signal::sendNodeRttsToFirstChannel(const NodeSelector::Rtts& result) {
-    std::vector<int> legacyChannels;
+void Signal::sendNodeRttsToChannels(const NodeSelector::Rtts& result) {
     {
-        std::lock_guard<std::mutex> lock(d->node_rtts_mtx);
+        const std::scoped_lock lock(d->node_rtts_mtx);
         if (nodeRttsByIp(d->node_rtts) == nodeRttsByIp(result)) {
             LOGD("nodeRtts not changed");
             return;
         }
         d->node_rtts = result;
-        d->node_rtts_sent_channels.clear();
-        legacyChannels.assign(d->legacy_node_rtts_channels.begin(), d->legacy_node_rtts_channels.end());
+    }
+    if (result.empty()) {
+        return;
     }
 
-    // rtts are connection-level; sending on a single channel is enough for the server.
-    int channel = -1;
+    std::vector<int> channels;
     {
-        std::lock_guard<std::mutex> lock(d->listeners_mtx);
-        if (!d->listeners.empty()) {
-            channel = d->listeners.begin()->first;
+        const std::scoped_lock lock(d->listeners_mtx);
+        channels.reserve(d->listeners.size());
+        for (const auto& [channel, listener] : d->listeners) {
+            channels.push_back(channel);
         }
     }
-    if (channel >= 0) {
-        sendCachedNodeRttsIfNeededForChannel(channel);
-    }
-    for (int legacyChannel : legacyChannels) {
-        sendCachedNodeRttsIfNeededForChannel(legacyChannel);
+    // 对端可能只注册了 Mesh 或 SFU，两个通道都需要上报 RTT。
+    for (int channel : channels) {
+        nodeRtts(result, channel);
     }
 }
 
 void Signal::applyNodeRtts(const std::vector<std::pair<std::string, int>>& rtts, bool isSelf) {
     d->node_selector.applyNodeRtts(rtts, isSelf);
-}
-
-void Signal::sendNodeRttsForLegacyPeer() {
-    std::vector<int> channels;
-    {
-        std::lock_guard<std::mutex> lock(d->listeners_mtx);
-        channels.reserve(d->listeners.size());
-        for (const auto& kv : d->listeners) {
-            channels.push_back(kv.first);
-        }
-    }
-    {
-        std::lock_guard<std::mutex> lock(d->node_rtts_mtx);
-        for (int channel : channels) {
-            d->legacy_node_rtts_channels.insert(channel);
-        }
-    }
-    for (int channel : channels) {
-        sendCachedNodeRttsIfNeededForChannel(channel);
-    }
 }
 
 bool Signal::nodeSelected() const {
@@ -1291,19 +1265,6 @@ void Signal::sendJoin(int channel) {
     req.message_case = RTC__SIGNAL_REQUEST__MESSAGE_JOIN;
     req.join = &join.opts;
     sendRequest(req, true);
-}
-
-void Signal::sendCachedNodeRttsIfNeededForChannel(int channel) {
-    NodeSelector::Rtts rtts;
-    {
-        std::lock_guard<std::mutex> lock(d->node_rtts_mtx);
-        if (d->node_rtts.empty() || d->node_rtts_sent_channels.find(channel) != d->node_rtts_sent_channels.end()) {
-            return;
-        }
-        rtts = d->node_rtts;
-        d->node_rtts_sent_channels.insert(channel);
-    }
-    nodeRtts(rtts, channel);
 }
 
 void Signal::srtpKey(const std::string& key, Rtc__SrtpProfile profile, int channel) {

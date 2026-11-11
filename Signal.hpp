@@ -68,7 +68,6 @@ public:
 
     // Connection-level node selection (shared by all channels), backed by NodeSelector.
     void applyNodeRtts(const std::vector<std::pair<std::string, int>>& rtts, bool isSelf);
-    void sendNodeRttsForLegacyPeer();
     bool nodeSelected() const;
 
     // Sender-side APIs (channel-scoped). channel < 0 joins all channels.
@@ -106,8 +105,7 @@ private:
     uint32_t sendLeave();
     void flushPendingReqs();
     void sendPing();
-    void sendCachedNodeRttsIfNeededForChannel(int channel);
-    void sendNodeRttsToFirstChannel(const NodeSelector::Rtts& rtts);
+    void sendNodeRttsToChannels(const NodeSelector::Rtts& rtts);
 
     static uint32_t timestampMs32();
     static bool parseIceCandidateJson(const std::string& json, IceCandidate* out);

@@ -13,7 +13,6 @@
 namespace bff {
 namespace {
 
-constexpr uint32_t kPerChannelNodeRttsSdkVersion = 10302;
 constexpr uint64_t kNoMuteKey = std::numeric_limits<uint64_t>::max();
 
 std::string toLower(std::string s) {
@@ -120,9 +119,6 @@ public:
             } else if (!autoMediaJoin) {
                 if (peer->n_codecs > 0) {
                     signal_->setVcodecs(commonCodecs(signal_->vcodecs(), peer));
-                }
-                if (isNewPeer && peer->sdk_version > 0 && peer->sdk_version < kPerChannelNodeRttsSdkVersion) {
-                    signal_->sendNodeRttsForLegacyPeer();
                 }
                 if (peer->n_node_rtts > 0) {
                     signal_->applyNodeRtts(toNodeRtts(peer), false);
