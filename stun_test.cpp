@@ -128,7 +128,7 @@ bool parse(const StunResponse& resp, const transaction_idt& tid, string* clientI
 }
 
 vector<std::pair<string, int>> SortStun(const span<IPAndPort>& servers, int timeoutMs, string* clientIp = nullptr, bool fastestOnly = false,
-                                       const function<void(const pair<string, int>&)>& onFirstResult = {}) {
+                                       const function<void(const pair<string, int>&)>& onFirstResult = {}, bool returnHost = false) {
     if (servers.empty()) {
         DBG("No valid STUN server");
         return {};
@@ -154,6 +154,7 @@ vector<std::pair<string, int>> SortStun(const span<IPAndPort>& servers, int time
         close(cfd_);
         return {};
     }
+    unordered_map<string, string> hosts;
     unordered_map<string, transaction_idt> transaction_map_;
     unordered_map<string, std::chrono::steady_clock::time_point> time_map_;
 
@@ -171,6 +172,9 @@ vector<std::pair<string, int>> SortStun(const span<IPAndPort>& servers, int time
             continue;
         }
         transaction_map_[getServerKey(saddr)] = req.transaction_id;
+        if (returnHost) {
+            hosts[getServerKey(saddr)] = sv.host.empty() ? sv.ip : sv.host;
+        }
     }
 
     DBG("polling for STUN responses...");
@@ -215,7 +219,7 @@ vector<std::pair<string, int>> SortStun(const span<IPAndPort>& servers, int time
         if (clientIp)
             *clientIp = cip;
         DBG("client ip from stun %s: %s, elapsed: %lldms", key.data(), cip.c_str(), elapsed);
-        sorted.emplace_back(key, elapsed);
+        sorted.emplace_back(returnHost ? hosts[key] : key, elapsed);
         if (sorted.size() == 1 && onFirstResult) {
             onFirstResult(sorted.front());
         }
@@ -228,15 +232,6 @@ vector<std::pair<string, int>> SortStun(const span<IPAndPort>& servers, int time
     }
     close(cfd_);
     return sorted;
-}
-
-string QueryFastestStun(const span<IPAndPort>& servers, int timeoutMs, string* clientIp = nullptr)
-{
-    auto sorted = SortStun(servers, timeoutMs, clientIp, true);
-    if (sorted.empty()) {
-        return {};
-    }
-    return sorted[0].first;
 }
 
 static vector<IPAndPort> toIpPorts(const set<string>& servers)
@@ -271,7 +266,8 @@ static vector<IPAndPort> toIpPorts(const set<string>& servers)
 string QueryFastestStun(const set<string>& servers, int timeoutMs, string* clientIp)
 {
     auto ipPorts = toIpPorts(servers);
-    return QueryFastestStun(ipPorts, timeoutMs, clientIp);
+    auto result = SortStun(ipPorts, timeoutMs, clientIp, true, {}, true);
+    return result.empty() ? string{} : result.front().first;
 }
 
 vector<std::pair<string, int>> SortStun(const set<string>& servers, int timeoutMs, string* clientIp)

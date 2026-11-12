@@ -340,19 +340,15 @@ void NodeSelector::updateNodes(const std::vector<std::string>& servers,
     const auto timeout = static_cast<int>(std::ceil(std::min(
         cachedBestRtt > 0 ? cachedBestRtt * 1.5 : 300.0, 300.0)));
 
-    std::thread([this, cs = std::move(cs), ss = std::move(ss), timeout, generation, tokenStr = token ? *token : std::string(), completionHandler = std::move(completionHandler)]() mutable {
-        const auto start = std::chrono::steady_clock::now();
-        const auto ret = SortStun(cs, timeout);
-        const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                                    std::chrono::steady_clock::now() - start)
-                                    .count();
-
-        std::string svr = ss.empty() ? std::string() : ss.front();
-        if (!ret.empty()) {
-            svr = ret.front().first;
+    std::thread([this, servers, cs = std::move(cs), ss = std::move(ss), timeout, generation, tokenStr = token ? *token : std::string(), completionHandler = std::move(completionHandler)]() mutable {
+        const auto host = QueryFastestStun(cs, timeout);
+        auto svr = servers.front();
+        if (!host.empty()) {
+            const auto entry = find_if(servers.begin(), servers.end(), [&](const auto& server) {
+                return hostFromAddr(server) == host;
+            });
+            svr = entry == servers.end() ? host : *entry;
         }
-
-        (void)elapsed_ms;
 
         std::string tokenOwned = tokenStr.empty() ? std::string() : tokenStr;
         updateNodesInternal(svr, &ss, tokenStr.empty() ? nullptr : &tokenOwned, generation, std::move(completionHandler));

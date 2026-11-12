@@ -81,12 +81,8 @@ JSPPRTC_JNI_S(jstring, StunUtil_nativeGetIpFromStun, jstring server, jint timeou
 }
 
 JSPPRTC_JNI_S(jstring, StunUtil_nativeFindBestStunServer, jobjectArray jservers, jint timeoutMs) {
-    string clientIp;
-    string res = QueryFastestStun(to_servers(env, jservers), timeoutMs, &clientIp);
-    if (res.empty()) {
-        return nullptr;
-    }
-    return jmi::from_string(res, env);
+    const auto host = QueryFastestStun(to_servers(env, jservers), timeoutMs);
+    return host.empty() ? nullptr : jmi::from_string(host, env);
 }
 
 JSPPRTC_JNI_S(jobjectArray, StunUtil_nativeSortStunServers, jobjectArray jservers, jint timeoutMs) {
