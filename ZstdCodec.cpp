@@ -3,7 +3,12 @@
 #include "Log.hpp"
 
 #include <openssl/md5.h>
+#if __has_include(<zstd/zstd.h>)
+// SwiftPM 将 Zstd 作为 framework 分发，使用 framework 形式的头文件路径。
+#include <zstd/zstd.h>
+#else
 #include <zstd.h>
+#endif
 
 #include <array>
 #include <cstdio>
