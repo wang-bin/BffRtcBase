@@ -49,7 +49,7 @@ struct SignalOptions {
     bool json = false;
     SignalImplementation implementation = SignalImplementation::Mixed;
     // Mixed: ms to wait after starting Quic before starting TCP. <=0 starts TCP immediately.
-    int mixedDelay = 250;
+    int mixedDelay = 150;
     // Handshake deadline in milliseconds.
     int connectTimeout = 10000;
     int pingInterval = 1000;
