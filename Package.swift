@@ -14,11 +14,8 @@ let package = Package(
         ),
     ],
     dependencies: [
-        .package(
-            url: "https://code.jspp.com/laser/quic.git",
-            branch: "main"
-        ),
-        .package(url: "https://code.jspp.com/wangbin/webrtc-7871-ios.git", branch: "master"),
+        .package(url: "https://code.jspp.com/laser/quic.git", branch: "1.4.16"),
+        .package(url: "https://code.jspp.com/wangbin/webrtc-7871-ios.git", branch: "1.4.16"),
     ],
     targets: [
         .target(
