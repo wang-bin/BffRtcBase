@@ -15,6 +15,7 @@
 #include <utility>
 #include <vector>
 
+#include "EventLogger.h"
 #include "NodeSelector.h"
 #include "PbCJson.h"
 #include "HttpClient.h"
@@ -36,6 +37,11 @@ using namespace std::chrono_literals;
 
 
 namespace {
+
+// SignalRequest.channel / listener key：0=SFU，1=MESH
+static bool isMeshChannel(int channel) {
+    return channel == static_cast<int>(RTC__CHANNEL__CHANNEL_MESH);
+}
 
 // Extract host part from a URL or "host:port" string.
 static std::string hostFromUrl(const std::string& url) {
@@ -478,6 +484,9 @@ public:
         notifyOnQuic(quic);
         last_code = 0;
         state_string = "open";
+        // ext_num: 1=TCP/WS, 2=UDP/QUIC
+        EventLogger::shared().log(RTC__EVENT_TYPE__EVENT_SIG_CONN_END, 0, quic ? 2 : 1);
+        EventLogger::shared().flush();
         startKeepalive();
     }
 
@@ -713,6 +722,10 @@ public:
         suppress_reconnect.store(false, memory_order::relaxed);
         user_closed.store(false);
 
+        // ext_num：第几次连接（含首次）；与 ObjC/Java connect 对齐，不在 scheduleReconnect 里重复报
+        EventLogger::shared().log(RTC__EVENT_TYPE__EVENT_SIG_CONN_START, 0,
+                                  reconnect_count.load(memory_order::relaxed) + 1);
+
         const auto& opt = Config::Shared().signal;
         const string tokenUrl = HttpClient::urlWithAuthToken(url);
         const string sni = sniHostForUrl(url, hosts_);
@@ -907,6 +920,9 @@ public:
     std::atomic<uint32_t> msg_id{1};
     std::atomic<uint64_t> mute_state_epoch{0};
     std::unordered_map<uint32_t, bool> important_reqs;
+    // request id → RESPONSE 时要上报的 EventType（mesh/SFU 由发送时 channel 已选定）
+    mutex resp_event_mtx;
+    unordered_map<uint32_t, Rtc__EventType> resp_events;
     mutex pending_mtx;
     vector<string> pending_reqs;
 
@@ -1000,6 +1016,15 @@ Signal::Signal() : d(std::make_shared<Private>(this)) {
     d->node_selector.setUpdateRttsCallback([d = d](const NodeSelector::Rtts& result) {
         if (!d->owner) return;
         d->owner->sendNodeRttsToChannels(result);
+    });
+    // C++ 信令路径：EventLogger 经 reportEvent 发出；弱引用避免析构后回调悬空
+    weak_ptr weak = d;
+    EventLogger::shared().setSendFn([weak](const Rtc__EventLog& e) {
+        auto self = weak.lock();
+        if (!self || !self->owner) {
+            return false;
+        }
+        return self->owner->reportEvent(&e);
     });
 }
 
@@ -1175,6 +1200,10 @@ void Signal::connectBestUrl(const std::string& serverUrl,
 
             // Reset connection state, mirroring JsppWebSocket connectServerUrl.
             d->important_reqs.clear();
+            {
+                const scoped_lock lock(d->resp_event_mtx);
+                d->resp_events.clear();
+            }
             d->rtts.clear();
             {
                 std::lock_guard<std::mutex> lock(d->node_rtts_mtx);
@@ -1266,6 +1295,7 @@ void Signal::sendJoin(int channel) {
     req.channel = static_cast<uint32_t>(channel);
     req.message_case = RTC__SIGNAL_REQUEST__MESSAGE_JOIN;
     req.join = &join.opts;
+    EventLogger::shared().log(RTC__EVENT_TYPE__EVENT_JOIN_MEDIA);
     sendRequest(req, true);
 }
 
@@ -1315,6 +1345,16 @@ void Signal::offer(const std::string& sdp, int channel) {
     req.channel = static_cast<uint32_t>(channel);
     req.message_case = RTC__SIGNAL_REQUEST__MESSAGE_OFFER;
     req.offer = &offer;
+    EventLogger::shared().log(isMeshChannel(channel)
+                                  ? RTC__EVENT_TYPE__EVENT_MESH_OFFER_SEND
+                                  : RTC__EVENT_TYPE__EVENT_NEGOTIATE_SEND);
+    // 先分配 id 并登记，再发送，避免 RESPONSE 抢先到达漏报 *_RESP
+    if (req.id == 0) {
+        req.id = d->msg_id.fetch_add(1);
+    }
+    trackRespEvent(req.id,
+                   isMeshChannel(channel) ? RTC__EVENT_TYPE__EVENT_MESH_OFFER_RESP
+                                          : RTC__EVENT_TYPE__EVENT_NEGOTIATE_RESP);
     // Mesh publish/subscribe may offer before the peer has joined (814 no selected node).
     sendRequest(req);
 }
@@ -1340,6 +1380,15 @@ void Signal::answer(const std::string& sdp, int channel) {
     req.channel = static_cast<uint32_t>(channel);
     req.message_case = RTC__SIGNAL_REQUEST__MESSAGE_ANSWER;
     req.answer = &answer;
+    EventLogger::shared().log(isMeshChannel(channel)
+                                  ? RTC__EVENT_TYPE__EVENT_MESH_ANSWER_SEND
+                                  : RTC__EVENT_TYPE__EVENT_ANSWER_SEND);
+    if (req.id == 0) {
+        req.id = d->msg_id.fetch_add(1);
+    }
+    trackRespEvent(req.id,
+                   isMeshChannel(channel) ? RTC__EVENT_TYPE__EVENT_MESH_ANSWER_RESP
+                                          : RTC__EVENT_TYPE__EVENT_ANSWER_RESP);
     sendRequest(req, true);
 }
 
@@ -1348,6 +1397,16 @@ void Signal::negotiation(bool negotiation, int channel) {
     req.channel = static_cast<uint32_t>(channel);
     req.message_case = RTC__SIGNAL_REQUEST__MESSAGE_NEGOTIATE;
     req.negotiate = negotiation ? 1 : 0;
+    EventLogger::shared().log(isMeshChannel(channel)
+                                  ? RTC__EVENT_TYPE__EVENT_MESH_NEGOTIATE_SEND
+                                  : RTC__EVENT_TYPE__EVENT_NEGOTIATE_SEND,
+                              0, negotiation ? 1 : 0);
+    if (req.id == 0) {
+        req.id = d->msg_id.fetch_add(1);
+    }
+    trackRespEvent(req.id,
+                   isMeshChannel(channel) ? RTC__EVENT_TYPE__EVENT_MESH_NEGOTIATE_RESP
+                                          : RTC__EVENT_TYPE__EVENT_NEGOTIATE_RESP);
     requestOrAgain(req);
 }
 
@@ -1398,6 +1457,7 @@ void Signal::nodeRtts(const std::vector<std::pair<std::string, int>>& rtts, int 
     req.channel = static_cast<uint32_t>(channel);
     req.message_case = RTC__SIGNAL_REQUEST__MESSAGE_NODE_RTTS;
     req.node_rtts = &nodeRtts;
+    EventLogger::shared().log(RTC__EVENT_TYPE__EVENT_NODE_RTTS);
     sendRequest(req);
 }
 
@@ -1428,6 +1488,12 @@ void Signal::selectChannel(int select, int channel) {
     req.channel = static_cast<uint32_t>(channel);
     req.message_case = RTC__SIGNAL_REQUEST__MESSAGE_SELECT_CHANNEL;
     req.select_channel = &selectChannel;
+    // ext_num: 0-SFU, 1-MESH
+    EventLogger::shared().log(RTC__EVENT_TYPE__EVENT_SELECT_CHANNEL, 0, select == 1 ? 1 : 0);
+    if (req.id == 0) {
+        req.id = d->msg_id.fetch_add(1);
+    }
+    trackRespEvent(req.id, RTC__EVENT_TYPE__EVENT_SELECT_CHANNEL_RESP);
     requestOrAgain(req);
 }
 
@@ -1438,6 +1504,17 @@ void Signal::report(const Rtc__StatsLog* stats, int64_t /*startTimeSinceEpoch*/,
     req.message_case = RTC__SIGNAL_REQUEST__MESSAGE_STATS_LOG;
     req.stats_log = const_cast<Rtc__StatsLog*>(stats);
     sendRequest(req);
+}
+
+bool Signal::reportEvent(const Rtc__EventLog* event, int channel) {
+    if (!event) {
+        return false;
+    }
+    Rtc__SignalRequest req = RTC__SIGNAL_REQUEST__INIT;
+    req.channel = static_cast<uint32_t>(channel);
+    req.message_case = RTC__SIGNAL_REQUEST__MESSAGE_EVENT_LOG;
+    req.event_log = const_cast<Rtc__EventLog*>(event);
+    return sendRequest(req);
 }
 
 void Signal::upload(const std::string& filename, span<const uint8_t> content, int channel) {
@@ -1519,6 +1596,9 @@ void Signal::handleReceiveSignalResponse(const Rtc__SignalResponse* signalRespon
             if (sdp == d->last_offer) {
                 LOGW("offer sdp not changed, ignore");
             } else {
+                EventLogger::shared().log(isMeshChannel(static_cast<int>(signalResponse->channel))
+                                              ? RTC__EVENT_TYPE__EVENT_MESH_OFFER_RECV
+                                              : RTC__EVENT_TYPE__EVENT_OFFER_RECV);
                 if (listener) {
                     listener->onOffer(sdp);
                 }
@@ -1534,6 +1614,7 @@ void Signal::handleReceiveSignalResponse(const Rtc__SignalResponse* signalRespon
                 break;
             }
             if (!sdp.empty()) {
+                EventLogger::shared().log(RTC__EVENT_TYPE__EVENT_MESH_ANSWER_RECV);
                 listener->onAnswer(sdp);
             } else {
                 ERROR("answer sdp empty after resolve");
@@ -1552,6 +1633,7 @@ void Signal::handleReceiveSignalResponse(const Rtc__SignalResponse* signalRespon
         }
         case RTC__SIGNAL_RESPONSE__MESSAGE_NODE_LIST: {
             LOGD("%s nodeList: %s", prefix.c_str(), pbJson(signalResponse->node_list ? &signalResponse->node_list->base : nullptr).c_str());
+            EventLogger::shared().log(RTC__EVENT_TYPE__EVENT_NODELIST_RECV);
             if (signalResponse->node_list) {
                 std::vector<std::string> nodes;
                 nodes.reserve(signalResponse->node_list->n_ips);
@@ -1615,6 +1697,8 @@ void Signal::handleReceiveSignalResponse(const Rtc__SignalResponse* signalRespon
             break;
         case RTC__SIGNAL_RESPONSE__MESSAGE_RESPONSE:
             LOGD("%s response: %s", prefix.c_str(), pbJson(signalResponse->response ? &signalResponse->response->base : nullptr).c_str());
+            // 按请求 id 上报对应 *_RESP（在错误提前 return 前先记）
+            emitRespEventIfAny(signalResponse->id);
             if (signalResponse->response) {
                 d->last_code = static_cast<int>(signalResponse->response->code);
                 if (d->last_code != 200) {
@@ -1688,6 +1772,10 @@ void Signal::handleReceiveSignalResponse(const Rtc__SignalResponse* signalRespon
     }
 
     d->important_reqs.erase(signalResponse->id);
+    {
+        const scoped_lock lock(d->resp_event_mtx);
+        d->resp_events.erase(signalResponse->id);
+    }
     d->maybeCloseAfterDisconnectResponse(signalResponse->id);
     if (resetReconn) {
         d->reconnect_count.store(0);
@@ -1796,18 +1884,38 @@ bool Signal::sendRequest(Rtc__SignalRequest& req, bool important) {
     return ok;
 }
 
-bool Signal::requestOrAgain(Rtc__SignalRequest& req) {
-    if (sendRequest(req)) {
-        return true;
+uint32_t Signal::requestOrAgain(Rtc__SignalRequest& req) {
+    if (!sendRequest(req)) {
+        LOGW("Failed to send (%u:%u), try again later", req.id, req.channel);
+        string packed;
+        if (packSignalRequest(req, &packed)) {
+            lock_guard lock(d->pending_mtx);
+            d->pending_reqs.push_back(std::move(packed));
+        }
     }
-    LOGW("Failed to send (%u:%u), try again later", req.id, req.channel);
-    string packed;
-    if (!packSignalRequest(req, &packed)) {
-        return false;
+    return req.id;
+}
+
+void Signal::trackRespEvent(uint32_t reqId, Rtc__EventType type) {
+    if (reqId == 0 || type == RTC__EVENT_TYPE__EVENT_UNKNOWN) {
+        return;
     }
-    lock_guard lock(d->pending_mtx);
-    d->pending_reqs.push_back(std::move(packed));
-    return false;
+    const scoped_lock lock(d->resp_event_mtx);
+    d->resp_events[reqId] = type;
+}
+
+void Signal::emitRespEventIfAny(uint32_t reqId) {
+    optional<Rtc__EventType> type;
+    {
+        const scoped_lock lock(d->resp_event_mtx);
+        if (auto it = d->resp_events.find(reqId); it != d->resp_events.end()) {
+            type = it->second;
+            d->resp_events.erase(it);
+        }
+    }
+    if (type) {
+        EventLogger::shared().log(*type);
+    }
 }
 
 uint32_t Signal::sendLeave() {

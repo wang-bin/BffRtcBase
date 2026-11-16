@@ -85,6 +85,8 @@ public:
     void selectChannel(int select, int channel);
     // TODO: use protobuf binary
     void report(const Rtc__StatsLog* stats, int64_t startTimeSinceEpoch, int channel);
+    // 上报通话事件；channel 默认 0。返回是否已交给传输发送。
+    bool reportEvent(const Rtc__EventLog* event, int channel = 0);
     // 经信令上传文件（如日志）；content 可为已压缩字节，channel 默认 0（对齐 JS）
     void upload(const std::string& filename, std::span<const uint8_t> content, int channel = 0);
 
@@ -100,7 +102,10 @@ private:
     SignalListener* listenerForChannel(int channel) const;
     void enumerateListeners(const std::function<void(int channel, SignalListener*)>& fn) const;
     bool sendRequest(Rtc__SignalRequest& req, bool important = false);
-    bool requestOrAgain(Rtc__SignalRequest& req);
+    // 发送失败则入队重发；返回已分配的 msg id（便于登记 RESP 事件）
+    uint32_t requestOrAgain(Rtc__SignalRequest& req);
+    void trackRespEvent(uint32_t reqId, Rtc__EventType type);
+    void emitRespEventIfAny(uint32_t reqId);
     void sendJoin(int channel);
     uint32_t sendLeave();
     void flushPendingReqs();

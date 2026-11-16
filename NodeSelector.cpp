@@ -10,6 +10,7 @@
 #include <string_view>
 #include <thread>
 
+#include "EventLogger.h"
 #include "HttpClient.h"
 #include "FileLogger.hpp"
 #include "defs.h"
@@ -412,6 +413,7 @@ void NodeSelector::updateNodes(const std::vector<std::string>& servers,
         return;
     }
 
+    EventLogger::shared().log(RTC__EVENT_TYPE__EVENT_BOOT_NODE_PROBE);
     // Use the cached best node as an extra bootstrap candidate and bound STUN wait to 300ms.
     std::vector<std::string> ss;
     ss.reserve(servers.size());
@@ -445,6 +447,7 @@ void NodeSelector::updateNodes(const std::vector<std::string>& servers,
             });
             svr = entry == servers.end() ? host : *entry;
         }
+        EventLogger::shared().log(RTC__EVENT_TYPE__EVENT_BOOT_NODE_SELECTED);
 
         std::string tokenOwned = tokenStr.empty() ? std::string() : tokenStr;
         updateNodesInternal(svr, &ss, tokenStr.empty() ? nullptr : &tokenOwned, generation, std::move(completionHandler));
@@ -462,6 +465,7 @@ void NodeSelector::updateNodesInternal(const std::string& server,
                                        uint64_t generation,
                                        CompletionCallback completionHandler) {
     const auto url = nodelistUrlFromServer(server, token);
+    EventLogger::shared().log(RTC__EVENT_TYPE__EVENT_NODELIST_REQ);
 
     HttpClient hc;
     const auto extraServersCopy = extraServers ? *extraServers : std::vector<std::string>{};
@@ -476,6 +480,8 @@ void NodeSelector::updateNodesInternal(const std::string& server,
         };
 
         if (!r.error.empty() || r.httpCode < 200 || r.httpCode >= 300) {
+            EventLogger::shared().log(RTC__EVENT_TYPE__EVENT_NODELIST_RESP,
+                                      r.httpCode != 0 ? r.httpCode : -1);
             ERROR("get nodelist failed");
             autoDone();
             return;
@@ -483,10 +489,12 @@ void NodeSelector::updateNodesInternal(const std::string& server,
 
         json j = json::parse(r.responseBody, nullptr, false);
         if (j.is_discarded()) {
+            EventLogger::shared().log(RTC__EVENT_TYPE__EVENT_NODELIST_RESP, -2);
             ERROR("parse nodelist failed");
             autoDone();
             return;
         }
+        EventLogger::shared().log(RTC__EVENT_TYPE__EVENT_NODELIST_RESP);
 
         if (!j.contains("ips") || !j["ips"].is_array()) {
             ERROR("missing ips");
@@ -523,6 +531,7 @@ void NodeSelector::updateNodesInternal(const std::string& server,
                 const auto clockOffset = serverTime - static_cast<int64_t>(responseTime)
                                        + std::max<int64_t>(0, r.requestRttMs) / 2;
                 FileLogger::shared().setClockOffset(clockOffset);
+                EventLogger::shared().onClockOffset(clockOffset);
                 INFO("nodelist clock offset: %lldms", static_cast<long long>(clockOffset));
             }
         }

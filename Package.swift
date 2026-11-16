@@ -41,6 +41,7 @@ let package = Package(
             sources: [
                 "Cert.cpp",
                 "DateTime.cpp",
+                "EventLogger.cpp",
                 "FileLogger.cpp",
                 "HttpClient.cpp",
                 "Log.cpp",

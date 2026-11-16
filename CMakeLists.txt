@@ -42,6 +42,7 @@ add_library(${PROJECT_NAME} MODULE
     protobuf-c/protobuf-c.c
     Cert.cpp
     DateTime.cpp
+    EventLogger.cpp
     FileLogger.cpp
     HttpClient.cpp
     laser-ca.der.c
