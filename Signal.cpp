@@ -181,8 +181,8 @@ static string signalRequestToString(const Rtc__SignalRequest& msg) {
             return "Answer: " + resolveDescSdp(msg.answer);
         case RTC__SIGNAL_REQUEST__MESSAGE_CANDIDATE:
             return string("Candidate: ") + (msg.candidate ? msg.candidate : "");
-        case RTC__SIGNAL_REQUEST__MESSAGE_NEGOTIATION:
-            return string("Negotiation: ") + (msg.negotiation ? "1" : "0");
+        case RTC__SIGNAL_REQUEST__MESSAGE_NEGOTIATE:
+            return string("Negotiate: ") + (msg.negotiate ? "1" : "0");
         case RTC__SIGNAL_REQUEST__MESSAGE_SUBSCRIBE:
             return "Subscribe: " + pbJson(msg.subscribe ? &msg.subscribe->base : nullptr);
         case RTC__SIGNAL_REQUEST__MESSAGE_RECREATE:
@@ -203,8 +203,8 @@ static string signalRequestToString(const Rtc__SignalRequest& msg) {
             return "NodeRtts: " + pbJson(msg.node_rtts ? &msg.node_rtts->base : nullptr);
         case RTC__SIGNAL_REQUEST__MESSAGE_MUTE:
             return "Mute: " + pbJson(msg.mute ? &msg.mute->base : nullptr);
-        case RTC__SIGNAL_REQUEST__MESSAGE_ADD_STATS:
-            return "AddStats: " + pbJson(msg.add_stats ? &msg.add_stats->base : nullptr);
+        case RTC__SIGNAL_REQUEST__MESSAGE_STATS_LOG:
+            return "StatsLog: " + pbJson(msg.stats_log ? &msg.stats_log->base : nullptr);
         case RTC__SIGNAL_REQUEST__MESSAGE_SELECT_CHANNEL:
             return "SelectChannel: " + pbJson(msg.select_channel ? &msg.select_channel->base : nullptr);
         case RTC__SIGNAL_REQUEST__MESSAGE_UPLOAD: {
@@ -213,6 +213,8 @@ static string signalRequestToString(const Rtc__SignalRequest& msg) {
             const size_t n = (u && u->content.data) ? u->content.len : 0;
             return string("Upload: filename=") + name + " content=" + std::to_string(n);
         }
+        case RTC__SIGNAL_REQUEST__MESSAGE_EVENT_LOG:
+            return "EventLog: " + pbJson(msg.event_log ? &msg.event_log->base : nullptr);
         case RTC__SIGNAL_REQUEST__MESSAGE_VAD:
             return "Vad: " + pbJson(msg.vad ? &msg.vad->base : nullptr);
         default:
@@ -1344,8 +1346,8 @@ void Signal::answer(const std::string& sdp, int channel) {
 void Signal::negotiation(bool negotiation, int channel) {
     Rtc__SignalRequest req = RTC__SIGNAL_REQUEST__INIT;
     req.channel = static_cast<uint32_t>(channel);
-    req.message_case = RTC__SIGNAL_REQUEST__MESSAGE_NEGOTIATION;
-    req.negotiation = negotiation ? 1 : 0;
+    req.message_case = RTC__SIGNAL_REQUEST__MESSAGE_NEGOTIATE;
+    req.negotiate = negotiation ? 1 : 0;
     requestOrAgain(req);
 }
 
@@ -1429,12 +1431,12 @@ void Signal::selectChannel(int select, int channel) {
     requestOrAgain(req);
 }
 
-void Signal::report(const Rtc__Stats* stats, int64_t /*startTimeSinceEpoch*/, int channel) {
+void Signal::report(const Rtc__StatsLog* stats, int64_t /*startTimeSinceEpoch*/, int channel) {
     if (!stats) return;
     Rtc__SignalRequest req = RTC__SIGNAL_REQUEST__INIT;
     req.channel = static_cast<uint32_t>(channel);
-    req.message_case = RTC__SIGNAL_REQUEST__MESSAGE_ADD_STATS;
-    req.add_stats = const_cast<Rtc__Stats*>(stats);
+    req.message_case = RTC__SIGNAL_REQUEST__MESSAGE_STATS_LOG;
+    req.stats_log = const_cast<Rtc__StatsLog*>(stats);
     sendRequest(req);
 }
 
@@ -1646,10 +1648,10 @@ void Signal::handleReceiveSignalResponse(const Rtc__SignalResponse* signalRespon
         case RTC__SIGNAL_RESPONSE__MESSAGE_BROADCAST:
             LOGD("%s broadcast: %s", prefix.c_str(), pbJson(signalResponse->broadcast ? &signalResponse->broadcast->base : nullptr).c_str());
             break;
-        case RTC__SIGNAL_RESPONSE__MESSAGE_NEGOTIATION:
-            LOGD("%s negotiation: %d", prefix.c_str(), signalResponse->negotiation != 0);
+        case RTC__SIGNAL_RESPONSE__MESSAGE_NEGOTIATE:
+            LOGD("%s negotiate: %d", prefix.c_str(), signalResponse->negotiate != 0);
             if (listener) {
-                listener->onNegotiation(signalResponse->negotiation != 0);
+                listener->onNegotiation(signalResponse->negotiate != 0);
             }
             break;
         case RTC__SIGNAL_RESPONSE__MESSAGE_TOKEN:

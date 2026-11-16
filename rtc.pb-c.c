@@ -1420,52 +1420,97 @@ void   rtc__select_channel__free_unpacked
   assert(message->base.descriptor == &rtc__select_channel__descriptor);
   protobuf_c_message_free_unpacked ((ProtobufCMessage*)message, allocator);
 }
-void   rtc__stats__init
-                     (Rtc__Stats         *message)
+void   rtc__stats_log__init
+                     (Rtc__StatsLog         *message)
 {
-  static const Rtc__Stats init_value = RTC__STATS__INIT;
+  static const Rtc__StatsLog init_value = RTC__STATS_LOG__INIT;
   *message = init_value;
 }
-size_t rtc__stats__get_packed_size
-                     (const Rtc__Stats *message)
+size_t rtc__stats_log__get_packed_size
+                     (const Rtc__StatsLog *message)
 {
-  assert(message->base.descriptor == &rtc__stats__descriptor);
+  assert(message->base.descriptor == &rtc__stats_log__descriptor);
   return protobuf_c_message_get_packed_size ((const ProtobufCMessage*)(message));
 }
-size_t rtc__stats__pack
-                     (const Rtc__Stats *message,
+size_t rtc__stats_log__pack
+                     (const Rtc__StatsLog *message,
                       uint8_t       *out)
 {
-  assert(message->base.descriptor == &rtc__stats__descriptor);
+  assert(message->base.descriptor == &rtc__stats_log__descriptor);
   return protobuf_c_message_pack ((const ProtobufCMessage*)message, out);
 }
-size_t rtc__stats__pack_to_buffer
-                     (const Rtc__Stats *message,
+size_t rtc__stats_log__pack_to_buffer
+                     (const Rtc__StatsLog *message,
                       ProtobufCBuffer *buffer)
 {
-  assert(message->base.descriptor == &rtc__stats__descriptor);
+  assert(message->base.descriptor == &rtc__stats_log__descriptor);
   return protobuf_c_message_pack_to_buffer ((const ProtobufCMessage*)message, buffer);
 }
-Rtc__Stats *
-       rtc__stats__unpack
+Rtc__StatsLog *
+       rtc__stats_log__unpack
                      (ProtobufCAllocator  *allocator,
                       size_t               len,
                       const uint8_t       *data)
 {
-  return (Rtc__Stats *)
-     protobuf_c_message_unpack (&rtc__stats__descriptor,
+  return (Rtc__StatsLog *)
+     protobuf_c_message_unpack (&rtc__stats_log__descriptor,
                                 allocator, len, data);
 }
-void   rtc__stats__free_unpacked
-                     (Rtc__Stats *message,
+void   rtc__stats_log__free_unpacked
+                     (Rtc__StatsLog *message,
                       ProtobufCAllocator *allocator)
 {
   if(!message)
     return;
-  assert(message->base.descriptor == &rtc__stats__descriptor);
+  assert(message->base.descriptor == &rtc__stats_log__descriptor);
   protobuf_c_message_free_unpacked ((ProtobufCMessage*)message, allocator);
 }
-static const ProtobufCFieldDescriptor rtc__signal_request__field_descriptors[22] =
+void   rtc__event_log__init
+                     (Rtc__EventLog         *message)
+{
+  static const Rtc__EventLog init_value = RTC__EVENT_LOG__INIT;
+  *message = init_value;
+}
+size_t rtc__event_log__get_packed_size
+                     (const Rtc__EventLog *message)
+{
+  assert(message->base.descriptor == &rtc__event_log__descriptor);
+  return protobuf_c_message_get_packed_size ((const ProtobufCMessage*)(message));
+}
+size_t rtc__event_log__pack
+                     (const Rtc__EventLog *message,
+                      uint8_t       *out)
+{
+  assert(message->base.descriptor == &rtc__event_log__descriptor);
+  return protobuf_c_message_pack ((const ProtobufCMessage*)message, out);
+}
+size_t rtc__event_log__pack_to_buffer
+                     (const Rtc__EventLog *message,
+                      ProtobufCBuffer *buffer)
+{
+  assert(message->base.descriptor == &rtc__event_log__descriptor);
+  return protobuf_c_message_pack_to_buffer ((const ProtobufCMessage*)message, buffer);
+}
+Rtc__EventLog *
+       rtc__event_log__unpack
+                     (ProtobufCAllocator  *allocator,
+                      size_t               len,
+                      const uint8_t       *data)
+{
+  return (Rtc__EventLog *)
+     protobuf_c_message_unpack (&rtc__event_log__descriptor,
+                                allocator, len, data);
+}
+void   rtc__event_log__free_unpacked
+                     (Rtc__EventLog *message,
+                      ProtobufCAllocator *allocator)
+{
+  if(!message)
+    return;
+  assert(message->base.descriptor == &rtc__event_log__descriptor);
+  protobuf_c_message_free_unpacked ((ProtobufCMessage*)message, allocator);
+}
+static const ProtobufCFieldDescriptor rtc__signal_request__field_descriptors[23] =
 {
   {
     "id",
@@ -1516,12 +1561,12 @@ static const ProtobufCFieldDescriptor rtc__signal_request__field_descriptors[22]
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
   {
-    "negotiation",
+    "negotiate",
     5,
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_BOOL,
     offsetof(Rtc__SignalRequest, message_case),
-    offsetof(Rtc__SignalRequest, negotiation),
+    offsetof(Rtc__SignalRequest, negotiate),
     NULL,
     NULL,
     PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
@@ -1672,13 +1717,13 @@ static const ProtobufCFieldDescriptor rtc__signal_request__field_descriptors[22]
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
   {
-    "add_stats",
+    "stats_log",
     18,
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_MESSAGE,
     offsetof(Rtc__SignalRequest, message_case),
-    offsetof(Rtc__SignalRequest, add_stats),
-    &rtc__stats__descriptor,
+    offsetof(Rtc__SignalRequest, stats_log),
+    &rtc__stats_log__descriptor,
     NULL,
     PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
@@ -1731,19 +1776,31 @@ static const ProtobufCFieldDescriptor rtc__signal_request__field_descriptors[22]
     0,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
+  {
+    "event_log",
+    23,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_MESSAGE,
+    offsetof(Rtc__SignalRequest, message_case),
+    offsetof(Rtc__SignalRequest, event_log),
+    &rtc__event_log__descriptor,
+    NULL,
+    PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
 };
 static const unsigned rtc__signal_request__field_indices_by_name[] = {
-  17,   /* field[17] = add_stats */
   11,   /* field[11] = addr */
   2,   /* field[2] = answer */
   10,   /* field[10] = broadcast */
   3,   /* field[3] = candidate */
   18,   /* field[18] = channel */
+  22,   /* field[22] = event_log */
   0,   /* field[0] = id */
   1,   /* field[1] = join */
   7,   /* field[7] = leave */
   16,   /* field[16] = mute */
-  4,   /* field[4] = negotiation */
+  4,   /* field[4] = negotiate */
   15,   /* field[15] = node_rtts */
   12,   /* field[12] = offer */
   8,   /* field[8] = ping */
@@ -1751,6 +1808,7 @@ static const unsigned rtc__signal_request__field_indices_by_name[] = {
   19,   /* field[19] = select_channel */
   14,   /* field[14] = srtp_key */
   9,   /* field[9] = stats */
+  17,   /* field[17] = stats_log */
   5,   /* field[5] = subscribe */
   21,   /* field[21] = to */
   20,   /* field[20] = upload */
@@ -1759,7 +1817,7 @@ static const unsigned rtc__signal_request__field_indices_by_name[] = {
 static const ProtobufCIntRange rtc__signal_request__number_ranges[1 + 1] =
 {
   { 1, 0 },
-  { 0, 22 }
+  { 0, 23 }
 };
 const ProtobufCMessageDescriptor rtc__signal_request__descriptor =
 {
@@ -1769,7 +1827,7 @@ const ProtobufCMessageDescriptor rtc__signal_request__descriptor =
   "Rtc__SignalRequest",
   "rtc",
   sizeof(Rtc__SignalRequest),
-  22,
+  23,
   rtc__signal_request__field_descriptors,
   rtc__signal_request__field_indices_by_name,
   1,  rtc__signal_request__number_ranges,
@@ -1869,7 +1927,7 @@ static const ProtobufCFieldDescriptor rtc__signal_response__field_descriptors[25
     PROTOBUF_C_TYPE_ENUM,
     offsetof(Rtc__SignalResponse, message_case),
     offsetof(Rtc__SignalResponse, state),
-    &rtc__peer_state__descriptor,
+    &rtc__conn_state__descriptor,
     NULL,
     PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
@@ -1959,12 +2017,12 @@ static const ProtobufCFieldDescriptor rtc__signal_response__field_descriptors[25
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
   {
-    "negotiation",
+    "negotiate",
     16,
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_BOOL,
     offsetof(Rtc__SignalResponse, message_case),
-    offsetof(Rtc__SignalResponse, negotiation),
+    offsetof(Rtc__SignalResponse, negotiate),
     NULL,
     NULL,
     PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
@@ -2093,7 +2151,7 @@ static const unsigned rtc__signal_response__field_indices_by_name[] = {
   0,   /* field[0] = id */
   5,   /* field[5] = joined */
   6,   /* field[6] = leaved */
-  15,   /* field[15] = negotiation */
+  15,   /* field[15] = negotiate */
   18,   /* field[18] = node_list */
   1,   /* field[1] = offer */
   9,   /* field[9] = pong */
@@ -2748,7 +2806,7 @@ static const ProtobufCFieldDescriptor rtc__state__field_descriptors[2] =
     PROTOBUF_C_TYPE_ENUM,
     0,   /* quantifier_offset */
     offsetof(Rtc__State, state),
-    &rtc__peer_state__descriptor,
+    &rtc__conn_state__descriptor,
     NULL,
     0,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
@@ -4109,7 +4167,7 @@ const ProtobufCMessageDescriptor rtc__select_channel__descriptor =
   (ProtobufCMessageInit) rtc__select_channel__init,
   NULL,NULL,NULL    /* reserved[123] */
 };
-static const ProtobufCFieldDescriptor rtc__stats__field_descriptors[47] =
+static const ProtobufCFieldDescriptor rtc__stats_log__field_descriptors[47] =
 {
   {
     "id",
@@ -4117,7 +4175,7 @@ static const ProtobufCFieldDescriptor rtc__stats__field_descriptors[47] =
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_INT64,
     0,   /* quantifier_offset */
-    offsetof(Rtc__Stats, id),
+    offsetof(Rtc__StatsLog, id),
     NULL,
     NULL,
     0,             /* flags */
@@ -4129,7 +4187,7 @@ static const ProtobufCFieldDescriptor rtc__stats__field_descriptors[47] =
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_STRING,
     0,   /* quantifier_offset */
-    offsetof(Rtc__Stats, peer_id),
+    offsetof(Rtc__StatsLog, peer_id),
     NULL,
     &protobuf_c_empty_string,
     0,             /* flags */
@@ -4141,7 +4199,7 @@ static const ProtobufCFieldDescriptor rtc__stats__field_descriptors[47] =
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_STRING,
     0,   /* quantifier_offset */
-    offsetof(Rtc__Stats, room_id),
+    offsetof(Rtc__StatsLog, room_id),
     NULL,
     &protobuf_c_empty_string,
     0,             /* flags */
@@ -4153,7 +4211,7 @@ static const ProtobufCFieldDescriptor rtc__stats__field_descriptors[47] =
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_STRING,
     0,   /* quantifier_offset */
-    offsetof(Rtc__Stats, app_id),
+    offsetof(Rtc__StatsLog, app_id),
     NULL,
     &protobuf_c_empty_string,
     0,             /* flags */
@@ -4165,7 +4223,7 @@ static const ProtobufCFieldDescriptor rtc__stats__field_descriptors[47] =
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_ENUM,
     0,   /* quantifier_offset */
-    offsetof(Rtc__Stats, source),
+    offsetof(Rtc__StatsLog, source),
     &rtc__source__descriptor,
     NULL,
     0,             /* flags */
@@ -4177,7 +4235,7 @@ static const ProtobufCFieldDescriptor rtc__stats__field_descriptors[47] =
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_ENUM,
     0,   /* quantifier_offset */
-    offsetof(Rtc__Stats, data_type),
+    offsetof(Rtc__StatsLog, data_type),
     &rtc__data_type__descriptor,
     NULL,
     0,             /* flags */
@@ -4189,7 +4247,7 @@ static const ProtobufCFieldDescriptor rtc__stats__field_descriptors[47] =
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_ENUM,
     0,   /* quantifier_offset */
-    offsetof(Rtc__Stats, direction),
+    offsetof(Rtc__StatsLog, direction),
     &rtc__direction__descriptor,
     NULL,
     0,             /* flags */
@@ -4201,7 +4259,7 @@ static const ProtobufCFieldDescriptor rtc__stats__field_descriptors[47] =
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_INT64,
     0,   /* quantifier_offset */
-    offsetof(Rtc__Stats, start_time),
+    offsetof(Rtc__StatsLog, start_time),
     NULL,
     NULL,
     0,             /* flags */
@@ -4213,7 +4271,7 @@ static const ProtobufCFieldDescriptor rtc__stats__field_descriptors[47] =
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_INT64,
     0,   /* quantifier_offset */
-    offsetof(Rtc__Stats, end_time),
+    offsetof(Rtc__StatsLog, end_time),
     NULL,
     NULL,
     0,             /* flags */
@@ -4225,7 +4283,7 @@ static const ProtobufCFieldDescriptor rtc__stats__field_descriptors[47] =
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_INT64,
     0,   /* quantifier_offset */
-    offsetof(Rtc__Stats, duration),
+    offsetof(Rtc__StatsLog, duration),
     NULL,
     NULL,
     0,             /* flags */
@@ -4237,7 +4295,7 @@ static const ProtobufCFieldDescriptor rtc__stats__field_descriptors[47] =
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_STRING,
     0,   /* quantifier_offset */
-    offsetof(Rtc__Stats, signal_node_id),
+    offsetof(Rtc__StatsLog, signal_node_id),
     NULL,
     &protobuf_c_empty_string,
     0,             /* flags */
@@ -4249,7 +4307,7 @@ static const ProtobufCFieldDescriptor rtc__stats__field_descriptors[47] =
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_STRING,
     0,   /* quantifier_offset */
-    offsetof(Rtc__Stats, signal_ip),
+    offsetof(Rtc__StatsLog, signal_ip),
     NULL,
     &protobuf_c_empty_string,
     0,             /* flags */
@@ -4261,7 +4319,7 @@ static const ProtobufCFieldDescriptor rtc__stats__field_descriptors[47] =
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_UINT32,
     0,   /* quantifier_offset */
-    offsetof(Rtc__Stats, signal_port),
+    offsetof(Rtc__StatsLog, signal_port),
     NULL,
     NULL,
     0,             /* flags */
@@ -4273,7 +4331,7 @@ static const ProtobufCFieldDescriptor rtc__stats__field_descriptors[47] =
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_UINT32,
     0,   /* quantifier_offset */
-    offsetof(Rtc__Stats, signal_rtt),
+    offsetof(Rtc__StatsLog, signal_rtt),
     NULL,
     NULL,
     0,             /* flags */
@@ -4285,7 +4343,7 @@ static const ProtobufCFieldDescriptor rtc__stats__field_descriptors[47] =
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_ENUM,
     0,   /* quantifier_offset */
-    offsetof(Rtc__Stats, protocol),
+    offsetof(Rtc__StatsLog, protocol),
     &rtc__protocol__descriptor,
     NULL,
     0,             /* flags */
@@ -4297,7 +4355,7 @@ static const ProtobufCFieldDescriptor rtc__stats__field_descriptors[47] =
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_STRING,
     0,   /* quantifier_offset */
-    offsetof(Rtc__Stats, media_node_id),
+    offsetof(Rtc__StatsLog, media_node_id),
     NULL,
     &protobuf_c_empty_string,
     0,             /* flags */
@@ -4309,7 +4367,7 @@ static const ProtobufCFieldDescriptor rtc__stats__field_descriptors[47] =
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_STRING,
     0,   /* quantifier_offset */
-    offsetof(Rtc__Stats, media_remote_ip),
+    offsetof(Rtc__StatsLog, media_remote_ip),
     NULL,
     &protobuf_c_empty_string,
     0,             /* flags */
@@ -4321,7 +4379,7 @@ static const ProtobufCFieldDescriptor rtc__stats__field_descriptors[47] =
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_UINT32,
     0,   /* quantifier_offset */
-    offsetof(Rtc__Stats, media_remote_port),
+    offsetof(Rtc__StatsLog, media_remote_port),
     NULL,
     NULL,
     0,             /* flags */
@@ -4333,7 +4391,7 @@ static const ProtobufCFieldDescriptor rtc__stats__field_descriptors[47] =
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_STRING,
     0,   /* quantifier_offset */
-    offsetof(Rtc__Stats, media_ip),
+    offsetof(Rtc__StatsLog, media_ip),
     NULL,
     &protobuf_c_empty_string,
     0,             /* flags */
@@ -4345,7 +4403,7 @@ static const ProtobufCFieldDescriptor rtc__stats__field_descriptors[47] =
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_UINT32,
     0,   /* quantifier_offset */
-    offsetof(Rtc__Stats, media_port),
+    offsetof(Rtc__StatsLog, media_port),
     NULL,
     NULL,
     0,             /* flags */
@@ -4357,7 +4415,7 @@ static const ProtobufCFieldDescriptor rtc__stats__field_descriptors[47] =
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_UINT32,
     0,   /* quantifier_offset */
-    offsetof(Rtc__Stats, media_rtt),
+    offsetof(Rtc__StatsLog, media_rtt),
     NULL,
     NULL,
     0,             /* flags */
@@ -4369,7 +4427,7 @@ static const ProtobufCFieldDescriptor rtc__stats__field_descriptors[47] =
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_STRING,
     0,   /* quantifier_offset */
-    offsetof(Rtc__Stats, track_id),
+    offsetof(Rtc__StatsLog, track_id),
     NULL,
     &protobuf_c_empty_string,
     0,             /* flags */
@@ -4381,7 +4439,7 @@ static const ProtobufCFieldDescriptor rtc__stats__field_descriptors[47] =
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_UINT32,
     0,   /* quantifier_offset */
-    offsetof(Rtc__Stats, ssrc),
+    offsetof(Rtc__StatsLog, ssrc),
     NULL,
     NULL,
     0,             /* flags */
@@ -4393,7 +4451,7 @@ static const ProtobufCFieldDescriptor rtc__stats__field_descriptors[47] =
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_UINT64,
     0,   /* quantifier_offset */
-    offsetof(Rtc__Stats, bytes_sent),
+    offsetof(Rtc__StatsLog, bytes_sent),
     NULL,
     NULL,
     0,             /* flags */
@@ -4405,7 +4463,7 @@ static const ProtobufCFieldDescriptor rtc__stats__field_descriptors[47] =
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_UINT64,
     0,   /* quantifier_offset */
-    offsetof(Rtc__Stats, bytes_received),
+    offsetof(Rtc__StatsLog, bytes_received),
     NULL,
     NULL,
     0,             /* flags */
@@ -4417,7 +4475,7 @@ static const ProtobufCFieldDescriptor rtc__stats__field_descriptors[47] =
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_UINT64,
     0,   /* quantifier_offset */
-    offsetof(Rtc__Stats, header_bytes_sent),
+    offsetof(Rtc__StatsLog, header_bytes_sent),
     NULL,
     NULL,
     0,             /* flags */
@@ -4429,7 +4487,7 @@ static const ProtobufCFieldDescriptor rtc__stats__field_descriptors[47] =
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_UINT64,
     0,   /* quantifier_offset */
-    offsetof(Rtc__Stats, header_bytes_received),
+    offsetof(Rtc__StatsLog, header_bytes_received),
     NULL,
     NULL,
     0,             /* flags */
@@ -4441,7 +4499,7 @@ static const ProtobufCFieldDescriptor rtc__stats__field_descriptors[47] =
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_UINT64,
     0,   /* quantifier_offset */
-    offsetof(Rtc__Stats, packets_sent),
+    offsetof(Rtc__StatsLog, packets_sent),
     NULL,
     NULL,
     0,             /* flags */
@@ -4453,7 +4511,7 @@ static const ProtobufCFieldDescriptor rtc__stats__field_descriptors[47] =
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_UINT64,
     0,   /* quantifier_offset */
-    offsetof(Rtc__Stats, packets_received),
+    offsetof(Rtc__StatsLog, packets_received),
     NULL,
     NULL,
     0,             /* flags */
@@ -4465,7 +4523,7 @@ static const ProtobufCFieldDescriptor rtc__stats__field_descriptors[47] =
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_INT64,
     0,   /* quantifier_offset */
-    offsetof(Rtc__Stats, packets_lost),
+    offsetof(Rtc__StatsLog, packets_lost),
     NULL,
     NULL,
     0,             /* flags */
@@ -4477,7 +4535,7 @@ static const ProtobufCFieldDescriptor rtc__stats__field_descriptors[47] =
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_INT32,
     0,   /* quantifier_offset */
-    offsetof(Rtc__Stats, packet_loss_rate),
+    offsetof(Rtc__StatsLog, packet_loss_rate),
     NULL,
     NULL,
     0,             /* flags */
@@ -4489,7 +4547,7 @@ static const ProtobufCFieldDescriptor rtc__stats__field_descriptors[47] =
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_UINT32,
     0,   /* quantifier_offset */
-    offsetof(Rtc__Stats, nack_count),
+    offsetof(Rtc__StatsLog, nack_count),
     NULL,
     NULL,
     0,             /* flags */
@@ -4501,7 +4559,7 @@ static const ProtobufCFieldDescriptor rtc__stats__field_descriptors[47] =
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_UINT32,
     0,   /* quantifier_offset */
-    offsetof(Rtc__Stats, jitter),
+    offsetof(Rtc__StatsLog, jitter),
     NULL,
     NULL,
     0,             /* flags */
@@ -4513,7 +4571,7 @@ static const ProtobufCFieldDescriptor rtc__stats__field_descriptors[47] =
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_UINT32,
     0,   /* quantifier_offset */
-    offsetof(Rtc__Stats, round_trip_time),
+    offsetof(Rtc__StatsLog, round_trip_time),
     NULL,
     NULL,
     0,             /* flags */
@@ -4525,7 +4583,7 @@ static const ProtobufCFieldDescriptor rtc__stats__field_descriptors[47] =
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_UINT32,
     0,   /* quantifier_offset */
-    offsetof(Rtc__Stats, freeze_count),
+    offsetof(Rtc__StatsLog, freeze_count),
     NULL,
     NULL,
     0,             /* flags */
@@ -4537,7 +4595,7 @@ static const ProtobufCFieldDescriptor rtc__stats__field_descriptors[47] =
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_UINT32,
     0,   /* quantifier_offset */
-    offsetof(Rtc__Stats, total_freezes_duration),
+    offsetof(Rtc__StatsLog, total_freezes_duration),
     NULL,
     NULL,
     0,             /* flags */
@@ -4549,7 +4607,7 @@ static const ProtobufCFieldDescriptor rtc__stats__field_descriptors[47] =
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_UINT32,
     0,   /* quantifier_offset */
-    offsetof(Rtc__Stats, freeze_rate),
+    offsetof(Rtc__StatsLog, freeze_rate),
     NULL,
     NULL,
     0,             /* flags */
@@ -4561,7 +4619,7 @@ static const ProtobufCFieldDescriptor rtc__stats__field_descriptors[47] =
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_UINT32,
     0,   /* quantifier_offset */
-    offsetof(Rtc__Stats, fir_count),
+    offsetof(Rtc__StatsLog, fir_count),
     NULL,
     NULL,
     0,             /* flags */
@@ -4573,7 +4631,7 @@ static const ProtobufCFieldDescriptor rtc__stats__field_descriptors[47] =
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_UINT32,
     0,   /* quantifier_offset */
-    offsetof(Rtc__Stats, pli_count),
+    offsetof(Rtc__StatsLog, pli_count),
     NULL,
     NULL,
     0,             /* flags */
@@ -4585,7 +4643,7 @@ static const ProtobufCFieldDescriptor rtc__stats__field_descriptors[47] =
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_UINT32,
     0,   /* quantifier_offset */
-    offsetof(Rtc__Stats, frames_sent),
+    offsetof(Rtc__StatsLog, frames_sent),
     NULL,
     NULL,
     0,             /* flags */
@@ -4597,7 +4655,7 @@ static const ProtobufCFieldDescriptor rtc__stats__field_descriptors[47] =
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_UINT32,
     0,   /* quantifier_offset */
-    offsetof(Rtc__Stats, frames_received),
+    offsetof(Rtc__StatsLog, frames_received),
     NULL,
     NULL,
     0,             /* flags */
@@ -4609,7 +4667,7 @@ static const ProtobufCFieldDescriptor rtc__stats__field_descriptors[47] =
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_UINT32,
     0,   /* quantifier_offset */
-    offsetof(Rtc__Stats, frames_per_second),
+    offsetof(Rtc__StatsLog, frames_per_second),
     NULL,
     NULL,
     0,             /* flags */
@@ -4621,7 +4679,7 @@ static const ProtobufCFieldDescriptor rtc__stats__field_descriptors[47] =
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_UINT32,
     0,   /* quantifier_offset */
-    offsetof(Rtc__Stats, frame_width),
+    offsetof(Rtc__StatsLog, frame_width),
     NULL,
     NULL,
     0,             /* flags */
@@ -4633,7 +4691,7 @@ static const ProtobufCFieldDescriptor rtc__stats__field_descriptors[47] =
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_UINT32,
     0,   /* quantifier_offset */
-    offsetof(Rtc__Stats, frame_height),
+    offsetof(Rtc__StatsLog, frame_height),
     NULL,
     NULL,
     0,             /* flags */
@@ -4645,7 +4703,7 @@ static const ProtobufCFieldDescriptor rtc__stats__field_descriptors[47] =
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_ENUM,
     0,   /* quantifier_offset */
-    offsetof(Rtc__Stats, role),
+    offsetof(Rtc__StatsLog, role),
     &rtc__role__descriptor,
     NULL,
     0,             /* flags */
@@ -4657,7 +4715,7 @@ static const ProtobufCFieldDescriptor rtc__stats__field_descriptors[47] =
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_BOOL,
     0,   /* quantifier_offset */
-    offsetof(Rtc__Stats, hit),
+    offsetof(Rtc__StatsLog, hit),
     NULL,
     NULL,
     0,             /* flags */
@@ -4669,14 +4727,14 @@ static const ProtobufCFieldDescriptor rtc__stats__field_descriptors[47] =
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_INT64,
     0,   /* quantifier_offset */
-    offsetof(Rtc__Stats, create_time),
+    offsetof(Rtc__StatsLog, create_time),
     NULL,
     NULL,
     0,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
 };
-static const unsigned rtc__stats__field_indices_by_name[] = {
+static const unsigned rtc__stats_log__field_indices_by_name[] = {
   3,   /* field[3] = app_id */
   24,   /* field[24] = bytes_received */
   23,   /* field[23] = bytes_sent */
@@ -4725,24 +4783,192 @@ static const unsigned rtc__stats__field_indices_by_name[] = {
   35,   /* field[35] = total_freezes_duration */
   21,   /* field[21] = track_id */
 };
-static const ProtobufCIntRange rtc__stats__number_ranges[1 + 1] =
+static const ProtobufCIntRange rtc__stats_log__number_ranges[1 + 1] =
 {
   { 1, 0 },
   { 0, 47 }
 };
-const ProtobufCMessageDescriptor rtc__stats__descriptor =
+const ProtobufCMessageDescriptor rtc__stats_log__descriptor =
 {
   PROTOBUF_C__MESSAGE_DESCRIPTOR_MAGIC,
-  "rtc.Stats",
-  "Stats",
-  "Rtc__Stats",
+  "rtc.StatsLog",
+  "StatsLog",
+  "Rtc__StatsLog",
   "rtc",
-  sizeof(Rtc__Stats),
+  sizeof(Rtc__StatsLog),
   47,
-  rtc__stats__field_descriptors,
-  rtc__stats__field_indices_by_name,
-  1,  rtc__stats__number_ranges,
-  (ProtobufCMessageInit) rtc__stats__init,
+  rtc__stats_log__field_descriptors,
+  rtc__stats_log__field_indices_by_name,
+  1,  rtc__stats_log__number_ranges,
+  (ProtobufCMessageInit) rtc__stats_log__init,
+  NULL,NULL,NULL    /* reserved[123] */
+};
+static const ProtobufCFieldDescriptor rtc__event_log__field_descriptors[11] =
+{
+  {
+    "id",
+    1,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_INT64,
+    0,   /* quantifier_offset */
+    offsetof(Rtc__EventLog, id),
+    NULL,
+    NULL,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+  {
+    "app_id",
+    2,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_STRING,
+    0,   /* quantifier_offset */
+    offsetof(Rtc__EventLog, app_id),
+    NULL,
+    &protobuf_c_empty_string,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+  {
+    "room_id",
+    3,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_STRING,
+    0,   /* quantifier_offset */
+    offsetof(Rtc__EventLog, room_id),
+    NULL,
+    &protobuf_c_empty_string,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+  {
+    "peer_id",
+    4,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_STRING,
+    0,   /* quantifier_offset */
+    offsetof(Rtc__EventLog, peer_id),
+    NULL,
+    &protobuf_c_empty_string,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+  {
+    "source",
+    5,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_ENUM,
+    0,   /* quantifier_offset */
+    offsetof(Rtc__EventLog, source),
+    &rtc__source__descriptor,
+    NULL,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+  {
+    "event_type",
+    6,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_ENUM,
+    0,   /* quantifier_offset */
+    offsetof(Rtc__EventLog, event_type),
+    &rtc__event_type__descriptor,
+    NULL,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+  {
+    "event_time",
+    7,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_INT64,
+    0,   /* quantifier_offset */
+    offsetof(Rtc__EventLog, event_time),
+    NULL,
+    NULL,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+  {
+    "err_code",
+    8,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_INT32,
+    0,   /* quantifier_offset */
+    offsetof(Rtc__EventLog, err_code),
+    NULL,
+    NULL,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+  {
+    "ext_num",
+    9,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_INT64,
+    0,   /* quantifier_offset */
+    offsetof(Rtc__EventLog, ext_num),
+    NULL,
+    NULL,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+  {
+    "ext_json",
+    10,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_STRING,
+    0,   /* quantifier_offset */
+    offsetof(Rtc__EventLog, ext_json),
+    NULL,
+    &protobuf_c_empty_string,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+  {
+    "create_time",
+    11,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_INT64,
+    0,   /* quantifier_offset */
+    offsetof(Rtc__EventLog, create_time),
+    NULL,
+    NULL,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+};
+static const unsigned rtc__event_log__field_indices_by_name[] = {
+  1,   /* field[1] = app_id */
+  10,   /* field[10] = create_time */
+  7,   /* field[7] = err_code */
+  6,   /* field[6] = event_time */
+  5,   /* field[5] = event_type */
+  9,   /* field[9] = ext_json */
+  8,   /* field[8] = ext_num */
+  0,   /* field[0] = id */
+  3,   /* field[3] = peer_id */
+  2,   /* field[2] = room_id */
+  4,   /* field[4] = source */
+};
+static const ProtobufCIntRange rtc__event_log__number_ranges[1 + 1] =
+{
+  { 1, 0 },
+  { 0, 11 }
+};
+const ProtobufCMessageDescriptor rtc__event_log__descriptor =
+{
+  PROTOBUF_C__MESSAGE_DESCRIPTOR_MAGIC,
+  "rtc.EventLog",
+  "EventLog",
+  "Rtc__EventLog",
+  "rtc",
+  sizeof(Rtc__EventLog),
+  11,
+  rtc__event_log__field_descriptors,
+  rtc__event_log__field_indices_by_name,
+  1,  rtc__event_log__number_ranges,
+  (ProtobufCMessageInit) rtc__event_log__init,
   NULL,NULL,NULL    /* reserved[123] */
 };
 static const ProtobufCEnumValue rtc__ice_policy__enum_values_by_number[7] =
@@ -4817,42 +5043,42 @@ const ProtobufCEnumDescriptor rtc__sdp_type__descriptor =
   rtc__sdp_type__value_ranges,
   NULL,NULL,NULL,NULL   /* reserved[1234] */
 };
-static const ProtobufCEnumValue rtc__peer_state__enum_values_by_number[7] =
+static const ProtobufCEnumValue rtc__conn_state__enum_values_by_number[7] =
 {
-  { "PEER_STATE_UNKNOWN", "RTC__PEER_STATE__PEER_STATE_UNKNOWN", 0 },
-  { "PEER_STATE_NEW", "RTC__PEER_STATE__PEER_STATE_NEW", 1 },
-  { "PEER_STATE_CONNECTING", "RTC__PEER_STATE__PEER_STATE_CONNECTING", 2 },
-  { "PEER_STATE_CONNECTED", "RTC__PEER_STATE__PEER_STATE_CONNECTED", 3 },
-  { "PEER_STATE_DISCONNECTED", "RTC__PEER_STATE__PEER_STATE_DISCONNECTED", 4 },
-  { "PEER_STATE_FAILED", "RTC__PEER_STATE__PEER_STATE_FAILED", 5 },
-  { "PEER_STATE_CLOSED", "RTC__PEER_STATE__PEER_STATE_CLOSED", 6 },
+  { "CONN_STATE_UNKNOWN", "RTC__CONN_STATE__CONN_STATE_UNKNOWN", 0 },
+  { "CONN_STATE_NEW", "RTC__CONN_STATE__CONN_STATE_NEW", 1 },
+  { "CONN_STATE_CONNECTING", "RTC__CONN_STATE__CONN_STATE_CONNECTING", 2 },
+  { "CONN_STATE_CONNECTED", "RTC__CONN_STATE__CONN_STATE_CONNECTED", 3 },
+  { "CONN_STATE_DISCONNECTED", "RTC__CONN_STATE__CONN_STATE_DISCONNECTED", 4 },
+  { "CONN_STATE_FAILED", "RTC__CONN_STATE__CONN_STATE_FAILED", 5 },
+  { "CONN_STATE_CLOSED", "RTC__CONN_STATE__CONN_STATE_CLOSED", 6 },
 };
-static const ProtobufCIntRange rtc__peer_state__value_ranges[] = {
+static const ProtobufCIntRange rtc__conn_state__value_ranges[] = {
 {0, 0},{0, 7}
 };
-static const ProtobufCEnumValueIndex rtc__peer_state__enum_values_by_name[7] =
+static const ProtobufCEnumValueIndex rtc__conn_state__enum_values_by_name[7] =
 {
-  { "PEER_STATE_CLOSED", 6 },
-  { "PEER_STATE_CONNECTED", 3 },
-  { "PEER_STATE_CONNECTING", 2 },
-  { "PEER_STATE_DISCONNECTED", 4 },
-  { "PEER_STATE_FAILED", 5 },
-  { "PEER_STATE_NEW", 1 },
-  { "PEER_STATE_UNKNOWN", 0 },
+  { "CONN_STATE_CLOSED", 6 },
+  { "CONN_STATE_CONNECTED", 3 },
+  { "CONN_STATE_CONNECTING", 2 },
+  { "CONN_STATE_DISCONNECTED", 4 },
+  { "CONN_STATE_FAILED", 5 },
+  { "CONN_STATE_NEW", 1 },
+  { "CONN_STATE_UNKNOWN", 0 },
 };
-const ProtobufCEnumDescriptor rtc__peer_state__descriptor =
+const ProtobufCEnumDescriptor rtc__conn_state__descriptor =
 {
   PROTOBUF_C__ENUM_DESCRIPTOR_MAGIC,
-  "rtc.PeerState",
-  "PeerState",
-  "Rtc__PeerState",
+  "rtc.ConnState",
+  "ConnState",
+  "Rtc__ConnState",
   "rtc",
   7,
-  rtc__peer_state__enum_values_by_number,
+  rtc__conn_state__enum_values_by_number,
   7,
-  rtc__peer_state__enum_values_by_name,
+  rtc__conn_state__enum_values_by_name,
   1,
-  rtc__peer_state__value_ranges,
+  rtc__conn_state__value_ranges,
   NULL,NULL,NULL,NULL   /* reserved[1234] */
 };
 static const ProtobufCEnumValue rtc__close_reason__enum_values_by_number[6] =
@@ -5189,5 +5415,183 @@ const ProtobufCEnumDescriptor rtc__data_type__descriptor =
   rtc__data_type__enum_values_by_name,
   2,
   rtc__data_type__value_ranges,
+  NULL,NULL,NULL,NULL   /* reserved[1234] */
+};
+static const ProtobufCEnumValue rtc__event_type__enum_values_by_number[47] =
+{
+  { "EVENT_UNKNOWN", "RTC__EVENT_TYPE__EVENT_UNKNOWN", 0 },
+  { "EVENT_INIT", "RTC__EVENT_TYPE__EVENT_INIT", 1001 },
+  { "EVENT_NET_TYPE", "RTC__EVENT_TYPE__EVENT_NET_TYPE", 1002 },
+  { "EVENT_BOOT_NODE_PROBE", "RTC__EVENT_TYPE__EVENT_BOOT_NODE_PROBE", 1003 },
+  { "EVENT_BOOT_NODE_SELECTED", "RTC__EVENT_TYPE__EVENT_BOOT_NODE_SELECTED", 1004 },
+  { "EVENT_NODELIST_REQ", "RTC__EVENT_TYPE__EVENT_NODELIST_REQ", 1005 },
+  { "EVENT_NODELIST_RESP", "RTC__EVENT_TYPE__EVENT_NODELIST_RESP", 1006 },
+  { "EVENT_PRE_CONN_START", "RTC__EVENT_TYPE__EVENT_PRE_CONN_START", 1007 },
+  { "EVENT_PRE_CONN_END", "RTC__EVENT_TYPE__EVENT_PRE_CONN_END", 1008 },
+  { "EVENT_SIG_CONN_START", "RTC__EVENT_TYPE__EVENT_SIG_CONN_START", 2001 },
+  { "EVENT_SIG_CONN_END", "RTC__EVENT_TYPE__EVENT_SIG_CONN_END", 2002 },
+  { "EVENT_SIG_JOINED", "RTC__EVENT_TYPE__EVENT_SIG_JOINED", 2003 },
+  { "EVENT_REMOTE_SIG_JOINED", "RTC__EVENT_TYPE__EVENT_REMOTE_SIG_JOINED", 2004 },
+  { "EVENT_NODELIST_RECV", "RTC__EVENT_TYPE__EVENT_NODELIST_RECV", 2005 },
+  { "EVENT_NODE_RTTS", "RTC__EVENT_TYPE__EVENT_NODE_RTTS", 2006 },
+  { "EVENT_REMOTE_NODE_RTTS", "RTC__EVENT_TYPE__EVENT_REMOTE_NODE_RTTS", 2007 },
+  { "EVENT_JOIN_MEDIA", "RTC__EVENT_TYPE__EVENT_JOIN_MEDIA", 3001 },
+  { "EVENT_JOINED_MEDIA", "RTC__EVENT_TYPE__EVENT_JOINED_MEDIA", 3002 },
+  { "EVENT_REMOTE_JOINED_MEDIA", "RTC__EVENT_TYPE__EVENT_REMOTE_JOINED_MEDIA", 3003 },
+  { "EVENT_SELECT_CHANNEL", "RTC__EVENT_TYPE__EVENT_SELECT_CHANNEL", 3004 },
+  { "EVENT_SELECT_CHANNEL_RESP", "RTC__EVENT_TYPE__EVENT_SELECT_CHANNEL_RESP", 3005 },
+  { "EVENT_REMOTE_SELECT_CHANNEL", "RTC__EVENT_TYPE__EVENT_REMOTE_SELECT_CHANNEL", 3006 },
+  { "EVENT_SELECTED_CHANNEL", "RTC__EVENT_TYPE__EVENT_SELECTED_CHANNEL", 3007 },
+  { "EVENT_OFFER_RECV", "RTC__EVENT_TYPE__EVENT_OFFER_RECV", 4001 },
+  { "EVENT_ANSWER_SEND", "RTC__EVENT_TYPE__EVENT_ANSWER_SEND", 4002 },
+  { "EVENT_ANSWER_RESP", "RTC__EVENT_TYPE__EVENT_ANSWER_RESP", 4003 },
+  { "EVENT_NEGOTIATE_SEND", "RTC__EVENT_TYPE__EVENT_NEGOTIATE_SEND", 4004 },
+  { "EVENT_NEGOTIATE_RESP", "RTC__EVENT_TYPE__EVENT_NEGOTIATE_RESP", 4006 },
+  { "EVENT_MESH_OFFER_SEND", "RTC__EVENT_TYPE__EVENT_MESH_OFFER_SEND", 4007 },
+  { "EVENT_MESH_OFFER_RESP", "RTC__EVENT_TYPE__EVENT_MESH_OFFER_RESP", 4008 },
+  { "EVENT_MESH_ANSWER_SEND", "RTC__EVENT_TYPE__EVENT_MESH_ANSWER_SEND", 4009 },
+  { "EVENT_MESH_ANSWER_RESP", "RTC__EVENT_TYPE__EVENT_MESH_ANSWER_RESP", 4010 },
+  { "EVENT_MESH_ANSWER_RECV", "RTC__EVENT_TYPE__EVENT_MESH_ANSWER_RECV", 4011 },
+  { "EVENT_MESH_OFFER_RECV", "RTC__EVENT_TYPE__EVENT_MESH_OFFER_RECV", 4012 },
+  { "EVENT_MESH_NEGOTIATE_SEND", "RTC__EVENT_TYPE__EVENT_MESH_NEGOTIATE_SEND", 4013 },
+  { "EVENT_MESH_NEGOTIATE_RESP", "RTC__EVENT_TYPE__EVENT_MESH_NEGOTIATE_RESP", 4014 },
+  { "EVENT_PC_STATE", "RTC__EVENT_TYPE__EVENT_PC_STATE", 5001 },
+  { "EVENT_ICE_STATE", "RTC__EVENT_TYPE__EVENT_ICE_STATE", 5002 },
+  { "EVENT_DC_STATE", "RTC__EVENT_TYPE__EVENT_DC_STATE", 5003 },
+  { "EVENT_SELECTED_CANDIDATE", "RTC__EVENT_TYPE__EVENT_SELECTED_CANDIDATE", 5004 },
+  { "EVENT_FIRST_AUDIO_PACKET", "RTC__EVENT_TYPE__EVENT_FIRST_AUDIO_PACKET", 6001 },
+  { "EVENT_FIRST_VIDEO_PACKET", "RTC__EVENT_TYPE__EVENT_FIRST_VIDEO_PACKET", 6002 },
+  { "EVENT_REMOTE_MEDIA_READY", "RTC__EVENT_TYPE__EVENT_REMOTE_MEDIA_READY", 6003 },
+  { "EVENT_INVITE", "RTC__EVENT_TYPE__EVENT_INVITE", 7001 },
+  { "EVENT_RINGING", "RTC__EVENT_TYPE__EVENT_RINGING", 7002 },
+  { "EVENT_ACCEPT", "RTC__EVENT_TYPE__EVENT_ACCEPT", 7003 },
+  { "EVENT_HANGUP", "RTC__EVENT_TYPE__EVENT_HANGUP", 7004 },
+};
+static const ProtobufCIntRange rtc__event_type__value_ranges[] = {
+{0, 0},{1001, 1},{2001, 9},{3001, 16},{4001, 23},{4006, 27},{5001, 36},{6001, 40},{7001, 43},{0, 47}
+};
+static const ProtobufCEnumValueIndex rtc__event_type__enum_values_by_name[47] =
+{
+  { "EVENT_ACCEPT", 45 },
+  { "EVENT_ANSWER_RESP", 25 },
+  { "EVENT_ANSWER_SEND", 24 },
+  { "EVENT_BOOT_NODE_PROBE", 3 },
+  { "EVENT_BOOT_NODE_SELECTED", 4 },
+  { "EVENT_DC_STATE", 38 },
+  { "EVENT_FIRST_AUDIO_PACKET", 40 },
+  { "EVENT_FIRST_VIDEO_PACKET", 41 },
+  { "EVENT_HANGUP", 46 },
+  { "EVENT_ICE_STATE", 37 },
+  { "EVENT_INIT", 1 },
+  { "EVENT_INVITE", 43 },
+  { "EVENT_JOINED_MEDIA", 17 },
+  { "EVENT_JOIN_MEDIA", 16 },
+  { "EVENT_MESH_ANSWER_RECV", 32 },
+  { "EVENT_MESH_ANSWER_RESP", 31 },
+  { "EVENT_MESH_ANSWER_SEND", 30 },
+  { "EVENT_MESH_NEGOTIATE_RESP", 35 },
+  { "EVENT_MESH_NEGOTIATE_SEND", 34 },
+  { "EVENT_MESH_OFFER_RECV", 33 },
+  { "EVENT_MESH_OFFER_RESP", 29 },
+  { "EVENT_MESH_OFFER_SEND", 28 },
+  { "EVENT_NEGOTIATE_RESP", 27 },
+  { "EVENT_NEGOTIATE_SEND", 26 },
+  { "EVENT_NET_TYPE", 2 },
+  { "EVENT_NODELIST_RECV", 13 },
+  { "EVENT_NODELIST_REQ", 5 },
+  { "EVENT_NODELIST_RESP", 6 },
+  { "EVENT_NODE_RTTS", 14 },
+  { "EVENT_OFFER_RECV", 23 },
+  { "EVENT_PC_STATE", 36 },
+  { "EVENT_PRE_CONN_END", 8 },
+  { "EVENT_PRE_CONN_START", 7 },
+  { "EVENT_REMOTE_JOINED_MEDIA", 18 },
+  { "EVENT_REMOTE_MEDIA_READY", 42 },
+  { "EVENT_REMOTE_NODE_RTTS", 15 },
+  { "EVENT_REMOTE_SELECT_CHANNEL", 21 },
+  { "EVENT_REMOTE_SIG_JOINED", 12 },
+  { "EVENT_RINGING", 44 },
+  { "EVENT_SELECTED_CANDIDATE", 39 },
+  { "EVENT_SELECTED_CHANNEL", 22 },
+  { "EVENT_SELECT_CHANNEL", 19 },
+  { "EVENT_SELECT_CHANNEL_RESP", 20 },
+  { "EVENT_SIG_CONN_END", 10 },
+  { "EVENT_SIG_CONN_START", 9 },
+  { "EVENT_SIG_JOINED", 11 },
+  { "EVENT_UNKNOWN", 0 },
+};
+const ProtobufCEnumDescriptor rtc__event_type__descriptor =
+{
+  PROTOBUF_C__ENUM_DESCRIPTOR_MAGIC,
+  "rtc.EventType",
+  "EventType",
+  "Rtc__EventType",
+  "rtc",
+  47,
+  rtc__event_type__enum_values_by_number,
+  47,
+  rtc__event_type__enum_values_by_name,
+  9,
+  rtc__event_type__value_ranges,
+  NULL,NULL,NULL,NULL   /* reserved[1234] */
+};
+static const ProtobufCEnumValue rtc__hangup_reason__enum_values_by_number[18] =
+{
+  { "HANGUP_UNKNOWN", "RTC__HANGUP_REASON__HANGUP_UNKNOWN", 0 },
+  { "HANGUP_NORMAL", "RTC__HANGUP_REASON__HANGUP_NORMAL", 1 },
+  { "HANGUP_TOKEN_INVALID", "RTC__HANGUP_REASON__HANGUP_TOKEN_INVALID", 11 },
+  { "HANGUP_SIG_FAILED", "RTC__HANGUP_REASON__HANGUP_SIG_FAILED", 12 },
+  { "HANGUP_HOST_DOWN", "RTC__HANGUP_REASON__HANGUP_HOST_DOWN", 13 },
+  { "HANGUP_SSL_ERROR", "RTC__HANGUP_REASON__HANGUP_SSL_ERROR", 14 },
+  { "HANGUP_SDP_ERROR", "RTC__HANGUP_REASON__HANGUP_SDP_ERROR", 15 },
+  { "HANGUP_CONN_FAILED", "RTC__HANGUP_REASON__HANGUP_CONN_FAILED", 16 },
+  { "HANGUP_REMOTE_CONN_FAILED", "RTC__HANGUP_REASON__HANGUP_REMOTE_CONN_FAILED", 17 },
+  { "HANGUP_CAMERA_PERMISSION", "RTC__HANGUP_REASON__HANGUP_CAMERA_PERMISSION", 21 },
+  { "HANGUP_MIC_PERMISSION", "RTC__HANGUP_REASON__HANGUP_MIC_PERMISSION", 22 },
+  { "HANGUP_AUDIO_SESSION_SET_CATEGORY", "RTC__HANGUP_REASON__HANGUP_AUDIO_SESSION_SET_CATEGORY", 23 },
+  { "HANGUP_AUDIO_SESSION_SET_ACTIVE", "RTC__HANGUP_REASON__HANGUP_AUDIO_SESSION_SET_ACTIVE", 24 },
+  { "HANGUP_AUDIO_UNIT_START", "RTC__HANGUP_REASON__HANGUP_AUDIO_UNIT_START", 25 },
+  { "HANGUP_TIMEOUT", "RTC__HANGUP_REASON__HANGUP_TIMEOUT", 480 },
+  { "HANGUP_BUSY", "RTC__HANGUP_REASON__HANGUP_BUSY", 486 },
+  { "HANGUP_CANCEL", "RTC__HANGUP_REASON__HANGUP_CANCEL", 487 },
+  { "HANGUP_REJECT", "RTC__HANGUP_REASON__HANGUP_REJECT", 603 },
+};
+static const ProtobufCIntRange rtc__hangup_reason__value_ranges[] = {
+{0, 0},{11, 2},{21, 9},{480, 14},{486, 15},{603, 17},{0, 18}
+};
+static const ProtobufCEnumValueIndex rtc__hangup_reason__enum_values_by_name[18] =
+{
+  { "HANGUP_AUDIO_SESSION_SET_ACTIVE", 12 },
+  { "HANGUP_AUDIO_SESSION_SET_CATEGORY", 11 },
+  { "HANGUP_AUDIO_UNIT_START", 13 },
+  { "HANGUP_BUSY", 15 },
+  { "HANGUP_CAMERA_PERMISSION", 9 },
+  { "HANGUP_CANCEL", 16 },
+  { "HANGUP_CONN_FAILED", 7 },
+  { "HANGUP_HOST_DOWN", 4 },
+  { "HANGUP_MIC_PERMISSION", 10 },
+  { "HANGUP_NORMAL", 1 },
+  { "HANGUP_REJECT", 17 },
+  { "HANGUP_REMOTE_CONN_FAILED", 8 },
+  { "HANGUP_SDP_ERROR", 6 },
+  { "HANGUP_SIG_FAILED", 3 },
+  { "HANGUP_SSL_ERROR", 5 },
+  { "HANGUP_TIMEOUT", 14 },
+  { "HANGUP_TOKEN_INVALID", 2 },
+  { "HANGUP_UNKNOWN", 0 },
+};
+const ProtobufCEnumDescriptor rtc__hangup_reason__descriptor =
+{
+  PROTOBUF_C__ENUM_DESCRIPTOR_MAGIC,
+  "rtc.HangupReason",
+  "HangupReason",
+  "Rtc__HangupReason",
+  "rtc",
+  18,
+  rtc__hangup_reason__enum_values_by_number,
+  18,
+  rtc__hangup_reason__enum_values_by_name,
+  6,
+  rtc__hangup_reason__value_ranges,
   NULL,NULL,NULL,NULL   /* reserved[1234] */
 };

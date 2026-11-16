@@ -49,7 +49,8 @@ typedef struct Rtc__NodeList Rtc__NodeList;
 typedef struct Rtc__NodeRtts Rtc__NodeRtts;
 typedef struct Rtc__NodeRtt Rtc__NodeRtt;
 typedef struct Rtc__SelectChannel Rtc__SelectChannel;
-typedef struct Rtc__Stats Rtc__Stats;
+typedef struct Rtc__StatsLog Rtc__StatsLog;
+typedef struct Rtc__EventLog Rtc__EventLog;
 
 
 /* --- enums --- */
@@ -115,39 +116,39 @@ typedef enum _Rtc__SdpType {
     PROTOBUF_C__FORCE_ENUM_TO_BE_INT_SIZE(RTC__SDP_TYPE)
 } Rtc__SdpType;
 /*
- * 服务端媒体通道连接状态
+ * 媒体连接状态
  */
-typedef enum _Rtc__PeerState {
+typedef enum _Rtc__ConnState {
   /*
    * 未知状态
    */
-  RTC__PEER_STATE__PEER_STATE_UNKNOWN = 0,
+  RTC__CONN_STATE__CONN_STATE_UNKNOWN = 0,
   /*
    * 新连接
    */
-  RTC__PEER_STATE__PEER_STATE_NEW = 1,
+  RTC__CONN_STATE__CONN_STATE_NEW = 1,
   /*
    * 连接中
    */
-  RTC__PEER_STATE__PEER_STATE_CONNECTING = 2,
+  RTC__CONN_STATE__CONN_STATE_CONNECTING = 2,
   /*
    * 已连接
    */
-  RTC__PEER_STATE__PEER_STATE_CONNECTED = 3,
+  RTC__CONN_STATE__CONN_STATE_CONNECTED = 3,
   /*
    * 断开连接
    */
-  RTC__PEER_STATE__PEER_STATE_DISCONNECTED = 4,
+  RTC__CONN_STATE__CONN_STATE_DISCONNECTED = 4,
   /*
    * 连接失败
    */
-  RTC__PEER_STATE__PEER_STATE_FAILED = 5,
+  RTC__CONN_STATE__CONN_STATE_FAILED = 5,
   /*
    * 连接关闭
    */
-  RTC__PEER_STATE__PEER_STATE_CLOSED = 6
-    PROTOBUF_C__FORCE_ENUM_TO_BE_INT_SIZE(RTC__PEER_STATE)
-} Rtc__PeerState;
+  RTC__CONN_STATE__CONN_STATE_CLOSED = 6
+    PROTOBUF_C__FORCE_ENUM_TO_BE_INT_SIZE(RTC__CONN_STATE)
+} Rtc__ConnState;
 /*
  * 关闭原因
  */
@@ -292,6 +293,302 @@ typedef enum _Rtc__DataType {
   RTC__DATA_TYPE__DATA_TYPE_SIGNAL = 102
     PROTOBUF_C__FORCE_ENUM_TO_BE_INT_SIZE(RTC__DATA_TYPE)
 } Rtc__DataType;
+/*
+ * 通话事件类型
+ */
+typedef enum _Rtc__EventType {
+  RTC__EVENT_TYPE__EVENT_UNKNOWN = 0,
+  /*
+   * 初始化与预连
+   */
+  /*
+   * 初始化，ext_num: SDK 版本，ext_json: 系统类型、版本、角色等
+   */
+  RTC__EVENT_TYPE__EVENT_INIT = 1001,
+  /*
+   * 网络类型，ext_num: 网络类型 (1-WiFi, 3-3G, 4-4G, 5-5G)
+   */
+  RTC__EVENT_TYPE__EVENT_NET_TYPE = 1002,
+  /*
+   * 兜底节点测速 (可选，单节点可跳过)
+   */
+  RTC__EVENT_TYPE__EVENT_BOOT_NODE_PROBE = 1003,
+  /*
+   * 兜底节点选中 (可选，单节点可跳过)
+   */
+  RTC__EVENT_TYPE__EVENT_BOOT_NODE_SELECTED = 1004,
+  /*
+   * 节点列表请求
+   */
+  RTC__EVENT_TYPE__EVENT_NODELIST_REQ = 1005,
+  /*
+   * 节点列表响应
+   */
+  RTC__EVENT_TYPE__EVENT_NODELIST_RESP = 1006,
+  /*
+   * 预连开始
+   */
+  RTC__EVENT_TYPE__EVENT_PRE_CONN_START = 1007,
+  /*
+   * 预连结束
+   */
+  RTC__EVENT_TYPE__EVENT_PRE_CONN_END = 1008,
+  /*
+   * 信令连接与节点选择
+   */
+  /*
+   * 信令连接开始，ext_num: 第几次连接
+   */
+  RTC__EVENT_TYPE__EVENT_SIG_CONN_START = 2001,
+  /*
+   * 信令连接结束，ext_num: 协议 (1-TCP/WS, 2-UDP/QUIC)
+   */
+  RTC__EVENT_TYPE__EVENT_SIG_CONN_END = 2002,
+  /*
+   * 已加入信令节点
+   */
+  RTC__EVENT_TYPE__EVENT_SIG_JOINED = 2003,
+  /*
+   * 对方已加入信令节点
+   */
+  RTC__EVENT_TYPE__EVENT_REMOTE_SIG_JOINED = 2004,
+  /*
+   * 收到节点列表通知
+   */
+  RTC__EVENT_TYPE__EVENT_NODELIST_RECV = 2005,
+  /*
+   * 发送节点 RTTs
+   */
+  RTC__EVENT_TYPE__EVENT_NODE_RTTS = 2006,
+  /*
+   * 收到对方节点 RTTs
+   */
+  RTC__EVENT_TYPE__EVENT_REMOTE_NODE_RTTS = 2007,
+  /*
+   * 加入媒体节点与通道选择
+   */
+  /*
+   * 加入媒体节点
+   */
+  RTC__EVENT_TYPE__EVENT_JOIN_MEDIA = 3001,
+  /*
+   * 已加入媒体节点
+   */
+  RTC__EVENT_TYPE__EVENT_JOINED_MEDIA = 3002,
+  /*
+   * 对方已加入媒体节点
+   */
+  RTC__EVENT_TYPE__EVENT_REMOTE_JOINED_MEDIA = 3003,
+  /*
+   * 选择媒体通道，ext_num: 通道 (0-SFU, 1-MESH)
+   */
+  RTC__EVENT_TYPE__EVENT_SELECT_CHANNEL = 3004,
+  /*
+   * 选择媒体通道响应，ext_num: 通道 (0-SFU, 1-MESH)
+   */
+  RTC__EVENT_TYPE__EVENT_SELECT_CHANNEL_RESP = 3005,
+  /*
+   * 对方选择媒体通道，ext_num: 通道 (0-SFU, 1-MESH)
+   */
+  RTC__EVENT_TYPE__EVENT_REMOTE_SELECT_CHANNEL = 3006,
+  /*
+   * 已选中媒体通道，ext_num: 通道 (0-SFU, 1-MESH)
+   */
+  RTC__EVENT_TYPE__EVENT_SELECTED_CHANNEL = 3007,
+  /*
+   * SDP 协商
+   */
+  /*
+   * SFU: 收到对方 Offer
+   */
+  RTC__EVENT_TYPE__EVENT_OFFER_RECV = 4001,
+  /*
+   * SFU: 发送 Answer
+   */
+  RTC__EVENT_TYPE__EVENT_ANSWER_SEND = 4002,
+  /*
+   * SFU: Answer 信令响应
+   */
+  RTC__EVENT_TYPE__EVENT_ANSWER_RESP = 4003,
+  /*
+   * SFU: 发送 Negotiate，ext_num: ICE是否重启（0-不重启，1-重启）
+   */
+  RTC__EVENT_TYPE__EVENT_NEGOTIATE_SEND = 4004,
+  /*
+   * SFU: Negotiate 信令响应
+   */
+  RTC__EVENT_TYPE__EVENT_NEGOTIATE_RESP = 4006,
+  /*
+   * Mesh: 发送 Offer
+   */
+  RTC__EVENT_TYPE__EVENT_MESH_OFFER_SEND = 4007,
+  /*
+   * Mesh: Offer 信令响应
+   */
+  RTC__EVENT_TYPE__EVENT_MESH_OFFER_RESP = 4008,
+  /*
+   * Mesh: 发送 Answer
+   */
+  RTC__EVENT_TYPE__EVENT_MESH_ANSWER_SEND = 4009,
+  /*
+   * Mesh: Answer 信令响应
+   */
+  RTC__EVENT_TYPE__EVENT_MESH_ANSWER_RESP = 4010,
+  /*
+   * Mesh: 收到对方 Answer
+   */
+  RTC__EVENT_TYPE__EVENT_MESH_ANSWER_RECV = 4011,
+  /*
+   * Mesh: 收到对方 Offer
+   */
+  RTC__EVENT_TYPE__EVENT_MESH_OFFER_RECV = 4012,
+  /*
+   * Mesh: 协商请求，ext_num: ICE是否重启（0-不重启，1-重启）
+   */
+  RTC__EVENT_TYPE__EVENT_MESH_NEGOTIATE_SEND = 4013,
+  /*
+   * Mesh: 协商响应
+   */
+  RTC__EVENT_TYPE__EVENT_MESH_NEGOTIATE_RESP = 4014,
+  /*
+   * 媒体连接状态
+   */
+  /*
+   * PeerConnection 状态，ext_num: 状态 (ConnState)
+   */
+  RTC__EVENT_TYPE__EVENT_PC_STATE = 5001,
+  /*
+   * ICE 状态，ext_num: 状态 (ConnState)
+   */
+  RTC__EVENT_TYPE__EVENT_ICE_STATE = 5002,
+  /*
+   * DataChannel 状态，ext_num: 状态 (1-打开, 2-关闭)
+   */
+  RTC__EVENT_TYPE__EVENT_DC_STATE = 5003,
+  /*
+   * 已选中 Candidate，ext_json: IP、端口和协议等
+   */
+  RTC__EVENT_TYPE__EVENT_SELECTED_CANDIDATE = 5004,
+  /*
+   * 媒体首包
+   */
+  /*
+   * 收到首个音频包
+   */
+  RTC__EVENT_TYPE__EVENT_FIRST_AUDIO_PACKET = 6001,
+  /*
+   * 收到首个视频包
+   */
+  RTC__EVENT_TYPE__EVENT_FIRST_VIDEO_PACKET = 6002,
+  /*
+   * 对方媒体就绪 (非静音/黑帧，UI 切换)
+   */
+  RTC__EVENT_TYPE__EVENT_REMOTE_MEDIA_READY = 6003,
+  /*
+   * 呼叫相关（业务事件）
+   */
+  /*
+   * 拨打，发起呼叫邀请
+   */
+  RTC__EVENT_TYPE__EVENT_INVITE = 7001,
+  /*
+   * 振铃，被叫端开始响铃 / 主叫端收到振铃确认
+   */
+  RTC__EVENT_TYPE__EVENT_RINGING = 7002,
+  /*
+   * 接受，接受呼叫邀请
+   */
+  RTC__EVENT_TYPE__EVENT_ACCEPT = 7003,
+  /*
+   * 挂断，结束当前通话，ext_num: 挂断原因 (HangupReason)
+   */
+  RTC__EVENT_TYPE__EVENT_HANGUP = 7004
+    PROTOBUF_C__FORCE_ENUM_TO_BE_INT_SIZE(RTC__EVENT_TYPE)
+} Rtc__EventType;
+/*
+ * 挂断/结束原因码
+ */
+typedef enum _Rtc__HangupReason {
+  RTC__HANGUP_REASON__HANGUP_UNKNOWN = 0,
+  /*
+   * 正常呼叫信令结束
+   */
+  /*
+   * 接通后正常挂断
+   */
+  RTC__HANGUP_REASON__HANGUP_NORMAL = 1,
+  /*
+   * 振铃超时无人接听 (SIP 480 Temporarily Unavailable)
+   */
+  RTC__HANGUP_REASON__HANGUP_TIMEOUT = 480,
+  /*
+   * 对方占线/忙音自动拒接 (SIP 486 Busy Here)
+   */
+  RTC__HANGUP_REASON__HANGUP_BUSY = 486,
+  /*
+   * 接通前主叫主动取消 (SIP 487 Request Terminated)
+   */
+  RTC__HANGUP_REASON__HANGUP_CANCEL = 487,
+  /*
+   * 被叫主动拒接 (SIP 603 Decline)
+   */
+  RTC__HANGUP_REASON__HANGUP_REJECT = 603,
+  /*
+   * 鉴权、网络与建连异常
+   */
+  /*
+   * Token 过期或无效触发挂断
+   */
+  RTC__HANGUP_REASON__HANGUP_TOKEN_INVALID = 11,
+  /*
+   * 信令失败触发挂断
+   */
+  RTC__HANGUP_REASON__HANGUP_SIG_FAILED = 12,
+  /*
+   * 主机不可达触发挂断
+   */
+  RTC__HANGUP_REASON__HANGUP_HOST_DOWN = 13,
+  /*
+   * SSL 错误触发挂断
+   */
+  RTC__HANGUP_REASON__HANGUP_SSL_ERROR = 14,
+  /*
+   * SDP 错误触发挂断
+   */
+  RTC__HANGUP_REASON__HANGUP_SDP_ERROR = 15,
+  /*
+   * PeerConnection 连接失败触发挂断
+   */
+  RTC__HANGUP_REASON__HANGUP_CONN_FAILED = 16,
+  /*
+   * 对方 PeerConnection 连接失败触发挂断
+   */
+  RTC__HANGUP_REASON__HANGUP_REMOTE_CONN_FAILED = 17,
+  /*
+   * 权限与音频引擎异常
+   */
+  /*
+   * 摄像头权限失败触发挂断
+   */
+  RTC__HANGUP_REASON__HANGUP_CAMERA_PERMISSION = 21,
+  /*
+   * 麦克风权限失败触发挂断
+   */
+  RTC__HANGUP_REASON__HANGUP_MIC_PERMISSION = 22,
+  /*
+   * 音频会话设置类别失败触发挂断
+   */
+  RTC__HANGUP_REASON__HANGUP_AUDIO_SESSION_SET_CATEGORY = 23,
+  /*
+   * 音频会话激活失败触发挂断
+   */
+  RTC__HANGUP_REASON__HANGUP_AUDIO_SESSION_SET_ACTIVE = 24,
+  /*
+   * 音频单元启动失败触发挂断
+   */
+  RTC__HANGUP_REASON__HANGUP_AUDIO_UNIT_START = 25
+    PROTOBUF_C__FORCE_ENUM_TO_BE_INT_SIZE(RTC__HANGUP_REASON)
+} Rtc__HangupReason;
 
 /* --- messages --- */
 
@@ -300,7 +597,7 @@ typedef enum {
   RTC__SIGNAL_REQUEST__MESSAGE_JOIN = 2,
   RTC__SIGNAL_REQUEST__MESSAGE_ANSWER = 3,
   RTC__SIGNAL_REQUEST__MESSAGE_CANDIDATE = 4,
-  RTC__SIGNAL_REQUEST__MESSAGE_NEGOTIATION = 5,
+  RTC__SIGNAL_REQUEST__MESSAGE_NEGOTIATE = 5,
   RTC__SIGNAL_REQUEST__MESSAGE_SUBSCRIBE = 6,
   RTC__SIGNAL_REQUEST__MESSAGE_RECREATE = 7,
   RTC__SIGNAL_REQUEST__MESSAGE_LEAVE = 8,
@@ -313,9 +610,10 @@ typedef enum {
   RTC__SIGNAL_REQUEST__MESSAGE_SRTP_KEY = 15,
   RTC__SIGNAL_REQUEST__MESSAGE_NODE_RTTS = 16,
   RTC__SIGNAL_REQUEST__MESSAGE_MUTE = 17,
-  RTC__SIGNAL_REQUEST__MESSAGE_ADD_STATS = 18,
+  RTC__SIGNAL_REQUEST__MESSAGE_STATS_LOG = 18,
   RTC__SIGNAL_REQUEST__MESSAGE_SELECT_CHANNEL = 20,
-  RTC__SIGNAL_REQUEST__MESSAGE_UPLOAD = 21
+  RTC__SIGNAL_REQUEST__MESSAGE_UPLOAD = 21,
+  RTC__SIGNAL_REQUEST__MESSAGE_EVENT_LOG = 23
     PROTOBUF_C__FORCE_ENUM_TO_BE_INT_SIZE(RTC__SIGNAL_REQUEST__MESSAGE__CASE)
 } Rtc__SignalRequest__MessageCase;
 
@@ -353,10 +651,6 @@ struct  Rtc__SignalRequest
      */
     char *stats;
     /*
-     * 上报客户端统计信息
-     */
-    Rtc__Stats *add_stats;
-    /*
      * 客户端回复 answer 给服务端
      */
     Rtc__SessionDescription *answer;
@@ -364,6 +658,10 @@ struct  Rtc__SignalRequest
      * 客户端向房间广播消息
      */
     Rtc__Broadcast *broadcast;
+    /*
+     * 上报事件信息
+     */
+    Rtc__EventLog *event_log;
     /*
      * 客户端加入房间
      */
@@ -381,7 +679,7 @@ struct  Rtc__SignalRequest
      */
     Rtc__NodeRtts *node_rtts;
     /*
-     * Mesh 向远端发送 offer
+     * Mesh 向对方发送 offer
      */
     Rtc__SessionDescription *offer;
     /*
@@ -401,6 +699,10 @@ struct  Rtc__SignalRequest
      */
     Rtc__SrtpKey *srtp_key;
     /*
+     * 上报统计信息
+     */
+    Rtc__StatsLog *stats_log;
+    /*
      * 客户端订阅/取消订阅音视频 Track
      */
     Rtc__Subscribe *subscribe;
@@ -409,13 +711,13 @@ struct  Rtc__SignalRequest
      */
     Rtc__Upload *upload;
     /*
-     * Mesh 向远端发送音量
+     * Mesh 向对方发送音量
      */
     Rtc__Vad *vad;
     /*
-     * 客户端请求重协商，实际会走 offer/answer 交换 SDP，值为 true 表示要重启ICE
+     * 客户端请求协商，实际会走 offer/answer 交换 SDP，值为 true 表示要重启ICE
      */
-    protobuf_c_boolean negotiation;
+    protobuf_c_boolean negotiate;
   };
 };
 #define RTC__SIGNAL_REQUEST__INIT \
@@ -439,7 +741,7 @@ typedef enum {
   RTC__SIGNAL_RESPONSE__MESSAGE_VAD = 13,
   RTC__SIGNAL_RESPONSE__MESSAGE_BROADCAST = 14,
   RTC__SIGNAL_RESPONSE__MESSAGE_ANSWER = 15,
-  RTC__SIGNAL_RESPONSE__MESSAGE_NEGOTIATION = 16,
+  RTC__SIGNAL_RESPONSE__MESSAGE_NEGOTIATE = 16,
   RTC__SIGNAL_RESPONSE__MESSAGE_SUBSCRIBE = 17,
   RTC__SIGNAL_RESPONSE__MESSAGE_CONFIG_DEPRECATED = 18,
   RTC__SIGNAL_RESPONSE__MESSAGE_NODE_LIST = 19,
@@ -496,7 +798,7 @@ struct  Rtc__SignalResponse
      */
     Rtc__AddTrack *add_track;
     /*
-     * Mesh 远端 answer
+     * Mesh 对方 Answer
      */
     Rtc__SessionDescription *answer;
     /*
@@ -544,7 +846,7 @@ struct  Rtc__SignalResponse
      */
     Rtc__States *states;
     /*
-     * Mesh 远端请求订阅/取消订阅音视频 Track
+     * Mesh 对方请求订阅/取消订阅音视频 Track
      */
     Rtc__Subscribe *subscribe;
     /*
@@ -554,11 +856,11 @@ struct  Rtc__SignalResponse
     /*
      * 服务端媒体通道连接状态
      */
-    Rtc__PeerState state;
+    Rtc__ConnState state;
     /*
-     * Mesh 远端请求重协商
+     * Mesh 对方请求协商
      */
-    protobuf_c_boolean negotiation;
+    protobuf_c_boolean negotiate;
   };
 };
 #define RTC__SIGNAL_RESPONSE__INIT \
@@ -813,7 +1115,7 @@ struct  Rtc__State
   /*
    * 媒体连接状态
    */
-  Rtc__PeerState state;
+  Rtc__ConnState state;
   /*
    * Peer ID
    */
@@ -821,7 +1123,7 @@ struct  Rtc__State
 };
 #define RTC__STATE__INIT \
  { PROTOBUF_C_MESSAGE_INIT (&rtc__state__descriptor) \
-, RTC__PEER_STATE__PEER_STATE_UNKNOWN, (char *)protobuf_c_empty_string }
+, RTC__CONN_STATE__CONN_STATE_UNKNOWN, (char *)protobuf_c_empty_string }
 
 
 /*
@@ -1334,7 +1636,7 @@ struct  Rtc__SelectChannel
 /*
  * 通话统计信息
  */
-struct  Rtc__Stats
+struct  Rtc__StatsLog
 {
   ProtobufCMessage base;
   /*
@@ -1404,11 +1706,11 @@ struct  Rtc__Stats
    */
   char *media_node_id;
   /*
-   * 远端媒体 IP
+   * 对方媒体 IP
    */
   char *media_remote_ip;
   /*
-   * 远端媒体端口
+   * 对方媒体端口
    */
   uint32_t media_remote_port;
   /*
@@ -1524,13 +1826,69 @@ struct  Rtc__Stats
    */
   protobuf_c_boolean hit;
   /*
-   * 记录创建时间，由服务端填写
+   * 日志入库时间，毫秒级时间戳，Unix Time（1970-01-01 UTC 起的毫秒数），由服务端填写
    */
   int64_t create_time;
 };
-#define RTC__STATS__INIT \
- { PROTOBUF_C_MESSAGE_INIT (&rtc__stats__descriptor) \
+#define RTC__STATS_LOG__INIT \
+ { PROTOBUF_C_MESSAGE_INIT (&rtc__stats_log__descriptor) \
 , 0, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, RTC__SOURCE__SOURCE_SERVER, RTC__DATA_TYPE__DATA_TYPE_UNKNOWN, RTC__DIRECTION__DIRECTION_UNKNOWN, 0, 0, 0, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, 0, 0, RTC__PROTOCOL__PROTOCOL_UNKNOWN, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, 0, (char *)protobuf_c_empty_string, 0, 0, (char *)protobuf_c_empty_string, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, RTC__ROLE__ROLE_NONE, 0, 0 }
+
+
+/*
+ * 通话事件日志
+ */
+struct  Rtc__EventLog
+{
+  ProtobufCMessage base;
+  /*
+   * 记录唯一标识 ID，由服务端填写
+   */
+  int64_t id;
+  /*
+   * 应用ID，可由服务端填写
+   */
+  char *app_id;
+  /*
+   * 房间ID，可由服务端填写，非本次通话时客户端需填写
+   */
+  char *room_id;
+  /*
+   * 用户ID，可由服务端填写
+   */
+  char *peer_id;
+  /*
+   * 事件来源，0=服务端, 1=客户端，由服务端填写
+   */
+  Rtc__Source source;
+  /*
+   * 事件类型，参考 EventType
+   */
+  Rtc__EventType event_type;
+  /*
+   * 事件实际发生时间，毫秒级时间戳，Unix Time（1970-01-01 UTC 起的毫秒数）
+   */
+  int64_t event_time;
+  /*
+   * 事件错误码，0-成功, 非0为具体错误码
+   */
+  int32_t err_code;
+  /*
+   * 事件扩展整数值，可选
+   */
+  int64_t ext_num;
+  /*
+   * 事件扩展详情，可选
+   */
+  char *ext_json;
+  /*
+   * 日志入库时间，毫秒级时间戳，Unix Time（1970-01-01 UTC 起的毫秒数）
+   */
+  int64_t create_time;
+};
+#define RTC__EVENT_LOG__INIT \
+ { PROTOBUF_C_MESSAGE_INIT (&rtc__event_log__descriptor) \
+, 0, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, RTC__SOURCE__SOURCE_SERVER, RTC__EVENT_TYPE__EVENT_UNKNOWN, 0, 0, 0, (char *)protobuf_c_empty_string, 0 }
 
 
 /* Rtc__SignalRequest methods */
@@ -2131,24 +2489,43 @@ Rtc__SelectChannel *
 void   rtc__select_channel__free_unpacked
                      (Rtc__SelectChannel *message,
                       ProtobufCAllocator *allocator);
-/* Rtc__Stats methods */
-void   rtc__stats__init
-                     (Rtc__Stats         *message);
-size_t rtc__stats__get_packed_size
-                     (const Rtc__Stats   *message);
-size_t rtc__stats__pack
-                     (const Rtc__Stats   *message,
+/* Rtc__StatsLog methods */
+void   rtc__stats_log__init
+                     (Rtc__StatsLog         *message);
+size_t rtc__stats_log__get_packed_size
+                     (const Rtc__StatsLog   *message);
+size_t rtc__stats_log__pack
+                     (const Rtc__StatsLog   *message,
                       uint8_t             *out);
-size_t rtc__stats__pack_to_buffer
-                     (const Rtc__Stats   *message,
+size_t rtc__stats_log__pack_to_buffer
+                     (const Rtc__StatsLog   *message,
                       ProtobufCBuffer     *buffer);
-Rtc__Stats *
-       rtc__stats__unpack
+Rtc__StatsLog *
+       rtc__stats_log__unpack
                      (ProtobufCAllocator  *allocator,
                       size_t               len,
                       const uint8_t       *data);
-void   rtc__stats__free_unpacked
-                     (Rtc__Stats *message,
+void   rtc__stats_log__free_unpacked
+                     (Rtc__StatsLog *message,
+                      ProtobufCAllocator *allocator);
+/* Rtc__EventLog methods */
+void   rtc__event_log__init
+                     (Rtc__EventLog         *message);
+size_t rtc__event_log__get_packed_size
+                     (const Rtc__EventLog   *message);
+size_t rtc__event_log__pack
+                     (const Rtc__EventLog   *message,
+                      uint8_t             *out);
+size_t rtc__event_log__pack_to_buffer
+                     (const Rtc__EventLog   *message,
+                      ProtobufCBuffer     *buffer);
+Rtc__EventLog *
+       rtc__event_log__unpack
+                     (ProtobufCAllocator  *allocator,
+                      size_t               len,
+                      const uint8_t       *data);
+void   rtc__event_log__free_unpacked
+                     (Rtc__EventLog *message,
                       ProtobufCAllocator *allocator);
 /* --- per-message closures --- */
 
@@ -2254,8 +2631,11 @@ typedef void (*Rtc__NodeRtt_Closure)
 typedef void (*Rtc__SelectChannel_Closure)
                  (const Rtc__SelectChannel *message,
                   void *closure_data);
-typedef void (*Rtc__Stats_Closure)
-                 (const Rtc__Stats *message,
+typedef void (*Rtc__StatsLog_Closure)
+                 (const Rtc__StatsLog *message,
+                  void *closure_data);
+typedef void (*Rtc__EventLog_Closure)
+                 (const Rtc__EventLog *message,
                   void *closure_data);
 
 /* --- services --- */
@@ -2265,7 +2645,7 @@ typedef void (*Rtc__Stats_Closure)
 
 extern const ProtobufCEnumDescriptor    rtc__ice_policy__descriptor;
 extern const ProtobufCEnumDescriptor    rtc__sdp_type__descriptor;
-extern const ProtobufCEnumDescriptor    rtc__peer_state__descriptor;
+extern const ProtobufCEnumDescriptor    rtc__conn_state__descriptor;
 extern const ProtobufCEnumDescriptor    rtc__close_reason__descriptor;
 extern const ProtobufCEnumDescriptor    rtc__role__descriptor;
 extern const ProtobufCEnumDescriptor    rtc__os_type__descriptor;
@@ -2276,6 +2656,8 @@ extern const ProtobufCEnumDescriptor    rtc__source__descriptor;
 extern const ProtobufCEnumDescriptor    rtc__direction__descriptor;
 extern const ProtobufCEnumDescriptor    rtc__protocol__descriptor;
 extern const ProtobufCEnumDescriptor    rtc__data_type__descriptor;
+extern const ProtobufCEnumDescriptor    rtc__event_type__descriptor;
+extern const ProtobufCEnumDescriptor    rtc__hangup_reason__descriptor;
 extern const ProtobufCMessageDescriptor rtc__signal_request__descriptor;
 extern const ProtobufCMessageDescriptor rtc__signal_response__descriptor;
 extern const ProtobufCMessageDescriptor rtc__compression__descriptor;
@@ -2310,7 +2692,8 @@ extern const ProtobufCMessageDescriptor rtc__node_list__descriptor;
 extern const ProtobufCMessageDescriptor rtc__node_rtts__descriptor;
 extern const ProtobufCMessageDescriptor rtc__node_rtt__descriptor;
 extern const ProtobufCMessageDescriptor rtc__select_channel__descriptor;
-extern const ProtobufCMessageDescriptor rtc__stats__descriptor;
+extern const ProtobufCMessageDescriptor rtc__stats_log__descriptor;
+extern const ProtobufCMessageDescriptor rtc__event_log__descriptor;
 
 PROTOBUF_C__END_DECLS
 

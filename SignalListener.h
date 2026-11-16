@@ -28,7 +28,7 @@ public:
     virtual void onSubscribe(bool audio, bool video) {}
 
     virtual void onChangedAddress(const std::string& addr) {}
-    virtual void onChangedPeerState(Rtc__PeerState peerState) {}
+    virtual void onChangedPeerState(Rtc__ConnState peerState) {}
     virtual void onLeaved(const Rtc__Leaved* leaved) {}
     virtual void onNegotiation(bool iceRestart) {}
 
