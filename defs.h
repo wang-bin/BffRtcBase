@@ -87,6 +87,9 @@ public:
     // ms
     int serversSortTimeout = 200;
 
+    // SDK 可写根目录（日志 / event 落盘 / zstd 字典等）。由平台注入，空则各模块禁用持久化。
+    std::string cacheDir;
+
     SignalOptions signal;
 
 private:

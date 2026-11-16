@@ -1,6 +1,7 @@
 #include "ZstdCodec.hpp"
 
 #include "Log.hpp"
+#include "defs.h"
 
 #include <openssl/md5.h>
 #if __has_include(<zstd/zstd.h>)
@@ -130,7 +131,7 @@ bool Zstd::setDict(span<const uint8_t> dict) {
     if (!installDict(dict)) {
         return false;
     }
-    // 已 setCacheDir 时自动落盘；目录为空则 no-op
+    // Config.cacheDir 非空时自动落盘
     saveCachedDict();
     return true;
 }
@@ -142,10 +143,8 @@ void Zstd::clearDict() {
         dict_.clear();
         dict_z_.clear();
         dict_hash_.clear();
-        if (!cache_dir_.empty()) {
-            path = (fs::path(cache_dir_) / kDictFileName).string();
-        }
     }
+    path = cachePath();
     if (path.empty()) {
         return;
     }
@@ -176,25 +175,12 @@ vector<uint8_t> Zstd::dictZData() const {
     return dict_z_;
 }
 
-void Zstd::setCacheDir(string_view dir) {
-    lock_guard lock(mtx_);
-    cache_dir_.assign(dir);
-    while (!cache_dir_.empty() && (cache_dir_.back() == '/' || cache_dir_.back() == '\\')) {
-        cache_dir_.pop_back();
-    }
-}
-
-string Zstd::cacheDir() const {
-    lock_guard lock(mtx_);
-    return cache_dir_;
-}
-
 string Zstd::cachePath() const {
-    lock_guard lock(mtx_);
-    if (cache_dir_.empty()) {
+    const auto& dir = Config::Shared().cacheDir;
+    if (dir.empty()) {
         return {};
     }
-    return (fs::path(cache_dir_) / kDictFileName).string();
+    return (fs::path(dir) / kDictFileName).string();
 }
 
 bool Zstd::writeFileAtomic(const string& path, span<const uint8_t> data) {

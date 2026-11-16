@@ -1,6 +1,7 @@
 #include "FileLogger.hpp"
 
 #include "DateTime.h"
+#include "defs.h"
 #include "json.hpp"
 
 #include <chrono>
@@ -350,13 +351,14 @@ FileLogger::~FileLogger()
     d_ = nullptr;
 }
 
-bool FileLogger::newLog(const string& userId, const string& logDir)
+bool FileLogger::newLog(const string& userId)
 {
-    if (userId.empty() || logDir.empty()) {
+    const string& dirStr = Config::Shared().cacheDir;
+    if (userId.empty() || dirStr.empty()) {
         return false;
     }
     const auto name = userId + "-" + UTCTimeString() + ".log";
-    const auto dir = fs::path(logDir);
+    const auto dir = fs::path(dirStr);
     const auto path = dir / name;
 
     error_code ec;

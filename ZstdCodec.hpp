@@ -29,9 +29,9 @@ public:
     const char* codecName() const noexcept { return kCodecName; }
 
     // 安装字典（raw 或 zstd 压缩帧）。空输入等同 clearDict。
-    // 成功后若已 setCacheDir 则自动落盘。非法输入返回 false 且不改状态。
+    // 成功后若 Config.cacheDir 非空则自动落盘。非法输入返回 false 且不改状态。
     bool setDict(std::span<const uint8_t> dict);
-    // 清空内存字典；若已 setCacheDir 则同时删除缓存文件。
+    // 清空内存字典；若 Config.cacheDir 非空则同时删除缓存文件。
     void clearDict();
 
     std::string dictMd5() const;
@@ -39,12 +39,7 @@ public:
     std::vector<uint8_t> dictData() const;
     std::vector<uint8_t> dictZData() const;
 
-    // 平台注入可写目录；字典文件名为 zstd.dict。空目录禁用落盘。
-    void setCacheDir(std::string_view dir);
-    std::string cacheDir() const;
-    std::string cachePath() const;
-
-    // 从 cachePath 读取并安装到内存（不回写文件）。
+    // 从 Config.cacheDir/zstd.dict 读取并安装到内存（不回写文件）。
     bool loadCachedDict();
 
     // 明文 sdp 优先；否则用 sdp_z 解压。与 JS Signal.ts 对齐。
@@ -63,10 +58,11 @@ private:
     bool installDict(std::span<const uint8_t> dict);
     // 将当前字典原始字节（优先 dict_z_，否则 dict_）原子写入 cachePath。
     bool saveCachedDict() const;
+    // 字典路径：Config.cacheDir/zstd.dict；cacheDir 空则返回空。
+    std::string cachePath() const;
 
     mutable std::mutex mtx_;
     int level_ = 3;
-    std::string cache_dir_;
     std::vector<uint8_t> dict_;
     std::vector<uint8_t> dict_z_;
     std::string dict_hash_;

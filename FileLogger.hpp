@@ -12,7 +12,8 @@ class FileLogger {
 public:
     static FileLogger& shared();
 
-    bool newLog(const std::string& userId, const std::string& logDir);
+    // 使用 Config::Shared().cacheDir 作为日志目录；平台需先注入 cacheDir。
+    bool newLog(const std::string& userId);
     void stop();
     // 仅当当前打开的日志仍是 name 时关闭；若已 newLog 轮转到下一通则不操作。
     // 用于通话结束上传：关掉本通话文件，又避免旧 stop 误关新通话日志。

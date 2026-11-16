@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "ZstdCodec.hpp"
+#include "defs.h"
 #include "jmi.h"
 
 using namespace std;
@@ -51,15 +52,8 @@ JSPPRTC_JNI(jboolean, ZstdCodec_nativeHasDict)
 
 JSPPRTC_JNI(void, ZstdCodec_nativeSetCacheDir, jstring dir)
 {
-    if (!dir) {
-        bff::Zstd::shared().setCacheDir({});
-        return;
-    }
-    const char* utf = env->GetStringUTFChars(dir, nullptr);
-    bff::Zstd::shared().setCacheDir(utf ? utf : "");
-    if (utf) {
-        env->ReleaseStringUTFChars(dir, utf);
-    }
+    // 仅写入 bff::Config::cacheDir，供 FileLogger / EventLogger / Zstd 共用
+    bff::Config::Shared().cacheDir = dir ? jmi::to_string(dir, env) : "";
 }
 
 JSPPRTC_JNI(jboolean, ZstdCodec_nativeLoadCachedDict)

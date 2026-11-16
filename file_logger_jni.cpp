@@ -40,12 +40,9 @@ JSPPRTC_JNI(void, FileLogger_nativeLog, jstring message, jint level, jstring tag
                                   jmi::to_string(message, env));
 }
 
-JSPPRTC_JNI(jboolean, FileLogger_nativeNewLog, jstring userId, jstring logDir)
+JSPPRTC_JNI(jboolean, FileLogger_nativeNewLog, jstring userId)
 {
-    return bff::FileLogger::shared().newLog(jmi::to_string(userId, env),
-                                            jmi::to_string(logDir, env))
-               ? JNI_TRUE
-               : JNI_FALSE;
+    return bff::FileLogger::shared().newLog(jmi::to_string(userId, env)) ? JNI_TRUE : JNI_FALSE;
 }
 
 JSPPRTC_JNI(void, FileLogger_nativeStop)
