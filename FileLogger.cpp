@@ -16,14 +16,14 @@
 #if (__APPLE__ + 0)
 #include <dispatch/dispatch.h>
 #include <pthread.h>
-#include <sys/sysctl.h>
 #include <sys/utsname.h>
 #elif (__ANDROID__ + 0)
 #include <sys/prctl.h>
-#include <sys/system_properties.h>
 #endif
 
 #include <cstdlib>
+
+#include "PlatformInfo.h"
 
 using namespace std;
 namespace fs = std::filesystem;
@@ -121,36 +121,6 @@ string LocalDateWithZone(int64_t clockOffset)
     return string(datePart) + " " + z;
 }
 
-#if (__APPLE__ + 0)
-string SysctlByName(const char* name)
-{
-    size_t size = 0;
-    if (sysctlbyname(name, nullptr, &size, nullptr, 0) != 0 || size == 0) {
-        return {};
-    }
-    string value(size, '\0');
-    if (sysctlbyname(name, value.data(), &size, nullptr, 0) != 0) {
-        return {};
-    }
-    // sysctl may include a trailing NUL in size.
-    while (!value.empty() && value.back() == '\0') {
-        value.pop_back();
-    }
-    return value;
-}
-#endif
-
-#if (__ANDROID__ + 0)
-string SystemProperty(const char* key)
-{
-    char value[PROP_VALUE_MAX] = {};
-    if (__system_property_get(key, value) <= 0) {
-        return {};
-    }
-    return value;
-}
-#endif
-
 string DeviceInfoLine()
 {
 #if (__APPLE__ + 0)
@@ -161,13 +131,7 @@ string DeviceInfoLine()
             model = u.machine;
         }
     }
-    string version = SysctlByName("kern.osproductversion");
-    if (version.empty()) {
-        utsname u{};
-        if (uname(&u) == 0 && u.release[0]) {
-            version = u.release;
-        }
-    }
+    const string version = OsProductVersion();
     // UIDevice.systemName is "iOS"; uname.sysname is "Darwin".
     return model + " iOS " + version;
 #elif (__ANDROID__ + 0)

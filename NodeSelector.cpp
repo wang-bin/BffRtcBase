@@ -4,8 +4,10 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <ctime>
 #include <set>
+#include <string_view>
 #include <thread>
 
 #include "HttpClient.h"
@@ -16,6 +18,7 @@
 // Reuse the existing STUN sorting helper used by ObjC NodeSelector.
 #include "stun_test.h"
 #include "Log.hpp"
+#include "PlatformInfo.h"
 
 #define TAG "nodes"
 namespace bff {
@@ -111,14 +114,107 @@ static uint16_t portFromAddr(const std::string& addr) {
     return p > 0 ? static_cast<uint16_t>(p) : 0;
 }
 
+// query 值做百分号编码，对齐 NSURLQueryItem / Uri.Builder。
+static std::string urlEncodeQueryValue(std::string_view s) {
+    std::string out;
+    out.reserve(s.size());
+    static constexpr char hex[] = "0123456789ABCDEF";
+    for (unsigned char c : s) {
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
+            || c == '-' || c == '_' || c == '.' || c == '~') {
+            out.push_back(static_cast<char>(c));
+        } else {
+            out.push_back('%');
+            out.push_back(hex[c >> 4]);
+            out.push_back(hex[c & 0xF]);
+        }
+    }
+    return out;
+}
+
+// 与 ObjC GetSdkVersionInt / Android 信令 ver 一致：major*10000 + minor*100 + patch。
+static unsigned sdkVersionInt() {
+#if defined(GIT_TAG) || defined(GIT_COMMIT)
+#if defined(GIT_TAG)
+    const char* tag = GIT_TAG;
+#else
+    const char* tag = GIT_COMMIT;
+#endif
+    if (tag[0] == 'v' || tag[0] == 'V') {
+        ++tag;
+    }
+    char* end = nullptr;
+    unsigned ver = static_cast<unsigned>(strtoul(tag, &end, 10)) * 10000u;
+    if (end && *end == '.') {
+        ver += static_cast<unsigned>(strtoul(end + 1, &end, 10)) * 100u;
+        if (end && *end == '.') {
+            ver += static_cast<unsigned>(strtoul(end + 1, &end, 10));
+        }
+    }
+    return ver;
+#else
+    return 0;
+#endif
+}
+
+static int osTypeValue() {
+#if (__ANDROID__ + 0)
+    return RTC__OS_TYPE__OS_TYPE_ANDROID;
+#elif (__APPLE__ + 0)
+    return RTC__OS_TYPE__OS_TYPE_IOS;
+#else
+    return RTC__OS_TYPE__OS_TYPE_UNKNOWN;
+#endif
+}
+
+// 与信令 URL 一致：Android 用 release 字符串，iOS 用 GetOsVersionInt 整数。
+// OS 版本字符串读取对齐 FileLogger DeviceInfoLine（PlatformInfo.h）。
+static std::string osVersionQueryValue() {
+#if (__ANDROID__ + 0)
+    return SystemProperty("ro.build.version.release");
+#elif (__APPLE__ + 0)
+    const string version = OsProductVersion();
+    // 对齐 ObjC GetOsVersionInt：例如 16.4.1 -> 160401
+    unsigned osVersion = 0;
+    const char* p = version.c_str();
+    for (int i = 0; i < 3; ++i) {
+        char* end = nullptr;
+        const unsigned part = p && *p ? static_cast<unsigned>(strtoul(p, &end, 10)) : 0u;
+        osVersion = osVersion * 100u + part;
+        p = (end && *end == '.') ? end + 1 : "";
+    }
+    return std::to_string(osVersion);
+#else
+    return {};
+#endif
+}
+
 // nodelist 端口与 server 参数一致；未写端口时走 HTTPS 默认 443。
-static std::string nodelistUrlFromServer(const std::string& server) {
+// query 与信令 URL 一致：token/os/osver/ver；token 来自 updateNodes。
+static std::string nodelistUrlFromServer(const std::string& server, const std::string* token) {
     const auto host = hostFromAddr(server);
     const auto port = portFromAddr(server);
-    if (port > 0) {
-        return std::string("https://") + host + ":" + std::to_string(port) + "/nodelist";
+    std::string url = port > 0
+        ? std::string("https://") + host + ":" + std::to_string(port) + "/nodelist"
+        : std::string("https://") + host + "/nodelist";
+    std::string query;
+    auto append = [&](const char* key, std::string_view value) {
+        if (!query.empty()) {
+            query.push_back('&');
+        }
+        query += key;
+        query.push_back('=');
+        query += urlEncodeQueryValue(value);
+    };
+    if (token && !token->empty()) {
+        append("token", *token);
     }
-    return std::string("https://") + host + "/nodelist";
+    append("os", std::to_string(osTypeValue()));
+    append("osver", osVersionQueryValue());
+    append("ver", std::to_string(sdkVersionInt()));
+    url.push_back('?');
+    url += query;
+    return url;
 }
 
 static std::string replaceHost(const std::string& url, const std::string& oldHost, const std::string& newHost) {
@@ -365,13 +461,9 @@ void NodeSelector::updateNodesInternal(const std::string& server,
                                        const std::string* token,
                                        uint64_t generation,
                                        CompletionCallback completionHandler) {
-    const auto url = nodelistUrlFromServer(server);
+    const auto url = nodelistUrlFromServer(server, token);
 
     HttpClient hc;
-    if (token && !token->empty()) {
-        hc.header("Authorization", *token);
-    }
-
     const auto extraServersCopy = extraServers ? *extraServers : std::vector<std::string>{};
     hc.get(url, [this, extraServers = extraServersCopy, generation, completionHandler = std::move(completionHandler)](const HttpClient::Result& r) mutable {
         const auto responseCompleteTime = std::chrono::system_clock::now().time_since_epoch()
