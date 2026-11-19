@@ -15,6 +15,7 @@ namespace bff {
 // - MD5 对齐 Md5.hashStr(String.fromCharCode(...bytes))：字节→U+00XX→UTF-8 后再 MD5；
 //   有压缩字典时对压缩 blob 做 hash，否则对 raw dict
 // - level default 3; encode may use dictionary when installed
+// - 压缩窗口上限 128KB（ZSTD_c_windowLog）
 class Zstd {
 public:
     static Zstd& shared();

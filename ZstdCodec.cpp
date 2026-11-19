@@ -12,6 +12,7 @@
 #endif
 
 #include <array>
+#include <bit>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -29,6 +30,9 @@ namespace {
 constexpr uint8_t kZstdMagic[] = {0x28, 0xb5, 0x2f, 0xfd};
 constexpr uint8_t kDictMagic[] = {0x37, 0xa4, 0x30, 0xec};
 constexpr const char* kDictFileName = "zstd.dict";
+// 压缩窗口上限 128KB
+constexpr size_t kMaxWindowSize = 128 << 10;
+constexpr int kWindowLog = std::bit_width(kMaxWindowSize) - 1;
 
 } // namespace
 
@@ -300,21 +304,22 @@ vector<uint8_t> Zstd::encode(span<const uint8_t> input, bool useDict) const {
         return {};
     }
 
+    auto* cctx = static_cast<ZSTD_CCtx*>(cctx_);
+    // 每次重置参数，避免无字典路径残留上次 loadDictionary
+    ZSTD_CCtx_reset(cctx, ZSTD_reset_session_and_parameters);
+    ZSTD_CCtx_setParameter(cctx, ZSTD_c_compressionLevel, level_);
+    ZSTD_CCtx_setParameter(cctx, ZSTD_c_windowLog, kWindowLog);
+    if (useDict && !dict_.empty()) {
+        auto err = ZSTD_CCtx_loadDictionary(cctx, dict_.data(), dict_.size());
+        if (ZSTD_isError(err)) {
+            ERROR("zstd load dict failed: %s", ZSTD_getErrorName(err));
+            return {};
+        }
+    }
+
     auto capacity = ZSTD_compressBound(input.size());
     vector<uint8_t> out(capacity);
-    size_t n = 0;
-    if (useDict && !dict_.empty()) {
-        n = ZSTD_compress_usingDict(static_cast<ZSTD_CCtx*>(cctx_),
-                                    out.data(),
-                                    out.size(),
-                                    input.data(),
-                                    input.size(),
-                                    dict_.data(),
-                                    dict_.size(),
-                                    level_);
-    } else {
-        n = ZSTD_compress(out.data(), out.size(), input.data(), input.size(), level_);
-    }
+    auto n = ZSTD_compress2(cctx, out.data(), out.size(), input.data(), input.size());
     if (ZSTD_isError(n)) {
         ERROR("zstd encode failed: %s", ZSTD_getErrorName(n));
         return {};
