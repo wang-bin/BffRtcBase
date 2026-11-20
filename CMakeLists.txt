@@ -41,6 +41,7 @@ target_include_directories(quic PUBLIC
 add_library(${PROJECT_NAME} MODULE
     protobuf-c/protobuf-c.c
     Cert.cpp
+    ClockOffsetStore.cpp
     DateTime.cpp
     EventLogger.cpp
     FileLogger.cpp
@@ -70,6 +71,7 @@ if(ANDROID)
     stun_test.cpp
     stun_jni.cpp
     file_logger_jni.cpp
+    clock_offset_jni.cpp
     config_jni.cpp
     curl_websocket_jni.cpp
     quic_websocket_jni.cpp

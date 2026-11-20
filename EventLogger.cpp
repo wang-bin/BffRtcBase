@@ -180,8 +180,15 @@ void EventLogger::setOnEvent(OnEventFn onEvent) {
 }
 
 void EventLogger::setIdentity(string roomId, string peerId) {
+    setIdentity(std::move(roomId), std::move(peerId), nullopt);
+}
+
+void EventLogger::setIdentity(string roomId, string peerId, optional<int64_t> cachedOffset) {
     {
         const scoped_lock lock(d->mtx);
+        if (!d->clockOffset && cachedOffset) {
+            d->clockOffset = cachedOffset;
+        }
         d->roomId = std::move(roomId);
         d->peerId = std::move(peerId);
         for (auto& e : d->queue) {
@@ -204,11 +211,18 @@ void EventLogger::clearSession() {
 }
 
 void EventLogger::onClockOffset(int64_t offsetMs) {
-    {
-        const scoped_lock lock(d->mtx);
-        d->clockOffset = offsetMs;
-    }
+    setClockOffset(offsetMs);
     flush();
+}
+
+void EventLogger::setClockOffset(int64_t offsetMs) {
+    const scoped_lock lock(d->mtx);
+    d->clockOffset = offsetMs;
+}
+
+optional<int64_t> EventLogger::clockOffset() {
+    const scoped_lock lock(d->mtx);
+    return d->clockOffset;
 }
 
 void EventLogger::invite() {

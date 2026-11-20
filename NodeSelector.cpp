@@ -10,6 +10,7 @@
 #include <string_view>
 #include <thread>
 
+#include "ClockOffsetStore.h"
 #include "EventLogger.h"
 #include "HttpClient.h"
 #include "FileLogger.hpp"
@@ -400,6 +401,7 @@ void NodeSelector::asyncSort(const std::vector<std::string>& nodesWithPort,
 void NodeSelector::updateNodes(const std::vector<std::string>& servers,
                                const std::string* token,
                                CompletionCallback completionHandler) {
+    // nodelist 前尽量用同 boot 缓存校时，供 invite/INIT 等尽早带正确 event_time
     const auto generation = beginUpdate(servers.size() <= 1 ? optional<string>(servers.empty() ? "" : hostFromAddr(servers.front())) : nullopt);
     if (servers.empty()) {
         finishUpdate(generation);
@@ -469,16 +471,25 @@ void NodeSelector::updateNodesInternal(const std::string& server,
 
     HttpClient hc;
     const auto extraServersCopy = extraServers ? *extraServers : std::vector<std::string>{};
-    hc.get(url, [this, extraServers = extraServersCopy, generation, completionHandler = std::move(completionHandler)](const HttpClient::Result& r) mutable {
-        const auto responseCompleteTime = std::chrono::system_clock::now().time_since_epoch()
-                                        / std::chrono::milliseconds{1};
-        const auto responseTime = responseCompleteTime - std::max<int64_t>(0, r.responseBodyElapsedMs);
+    const auto requestClock = ClockSample::now();
+    hc.get(url, [this, requestClock, extraServers = extraServersCopy, generation, completionHandler = std::move(completionHandler)](const HttpClient::Result& r) mutable {
+        const auto responseClock = ClockSample::now();
+        const auto responseTime = responseClock.wallMs - std::max<int64_t>(0, r.responseBodyElapsedMs);
         bool sort = false;
         auto autoDone = [&] {
             if (!sort) finishUpdate(generation);
             if (completionHandler) completionHandler();
         };
 
+        bool stale;
+        {
+            const std::scoped_lock lock(update_nodes_mtx_);
+            stale = generation != update_generation_ || !update_pending_;
+        }
+        if (stale) {
+            autoDone();
+            return;
+        }
         if (!r.error.empty() || r.httpCode < 200 || r.httpCode >= 300) {
             EventLogger::shared().log(RTC__EVENT_TYPE__EVENT_NODELIST_RESP,
                                       r.httpCode != 0 ? r.httpCode : -1);
@@ -523,15 +534,28 @@ void NodeSelector::updateNodesInternal(const std::string& server,
 
         if (j.contains("current_time") && j["current_time"].is_number_integer()) {
             const auto serverTime = j["current_time"].get<int64_t>();
-            if (serverTime > 0) {
+            if (serverTime > 0 && responseClock.follows(requestClock)) {
                 // current_time 是服务端生成响应时的时间，responseTime 是客户端收到 nodelist 响应时的本地时间。
                 // RTT 从 TLS 握手完成后开始计量，不包含建连耗时。
                 // 假设上下行时延近似对称且服务端处理耗时较小，回程时延约为 HTTP RTT / 2。
                 // 因而 clockOffset = current_time - responseTime + HTTP RTT / 2；此处不使用 STUN RTT。
                 const auto clockOffset = serverTime - static_cast<int64_t>(responseTime)
                                        + std::max<int64_t>(0, r.requestRttMs) / 2;
-                FileLogger::shared().setClockOffset(clockOffset);
-                EventLogger::shared().onClockOffset(clockOffset);
+                bool current;
+                {
+                    const std::scoped_lock lock(update_nodes_mtx_);
+                    current = generation == update_generation_ && update_pending_;
+                    if (current) {
+                        FileLogger::shared().setClockOffset(clockOffset);
+                        EventLogger::shared().setClockOffset(clockOffset);
+                        ClockOffsetStore::save(clockOffset, responseClock);
+                    }
+                }
+                if (!current) {
+                    autoDone();
+                    return;
+                }
+                EventLogger::shared().flush();
                 INFO("nodelist clock offset: %lldms", static_cast<long long>(clockOffset));
             }
         }

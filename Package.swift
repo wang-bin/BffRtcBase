@@ -40,6 +40,7 @@ let package = Package(
             ],
             sources: [
                 "Cert.cpp",
+                "ClockOffsetStore.cpp",
                 "DateTime.cpp",
                 "EventLogger.cpp",
                 "FileLogger.cpp",
