@@ -380,19 +380,19 @@ typedef enum _Rtc__EventType {
    */
   RTC__EVENT_TYPE__EVENT_REMOTE_JOINED_MEDIA = 3003,
   /*
-   * 选择媒体通道，ext_num: 通道 (0-SFU, 1-MESH)
+   * 选择媒体通道
    */
   RTC__EVENT_TYPE__EVENT_SELECT_CHANNEL = 3004,
   /*
-   * 选择媒体通道响应，ext_num: 通道 (0-SFU, 1-MESH)
+   * 选择媒体通道响应
    */
   RTC__EVENT_TYPE__EVENT_SELECT_CHANNEL_RESP = 3005,
   /*
-   * 对方选择媒体通道，ext_num: 通道 (0-SFU, 1-MESH)
+   * 对方选择媒体通道
    */
   RTC__EVENT_TYPE__EVENT_REMOTE_SELECT_CHANNEL = 3006,
   /*
-   * 已选中媒体通道，ext_num: 通道 (0-SFU, 1-MESH)
+   * 已选中媒体通道
    */
   RTC__EVENT_TYPE__EVENT_SELECTED_CHANNEL = 3007,
   /*
@@ -1846,6 +1846,10 @@ struct  Rtc__EventLog
    */
   int64_t id;
   /*
+   * 日志入库时间，毫秒级时间戳，Unix Time（1970-01-01 UTC 起的毫秒数），由服务端填写
+   */
+  int64_t create_time;
+  /*
    * 应用ID，可由服务端填写
    */
   char *app_id;
@@ -1861,6 +1865,10 @@ struct  Rtc__EventLog
    * 事件来源，0=服务端, 1=客户端，由服务端填写
    */
   Rtc__Source source;
+  /*
+   * 通道标识，0-SFU，1-Mesh
+   */
+  Rtc__Channel channel;
   /*
    * 事件类型，参考 EventType
    */
@@ -1881,14 +1889,10 @@ struct  Rtc__EventLog
    * 事件扩展详情，可选
    */
   char *ext_json;
-  /*
-   * 日志入库时间，毫秒级时间戳，Unix Time（1970-01-01 UTC 起的毫秒数）
-   */
-  int64_t create_time;
 };
 #define RTC__EVENT_LOG__INIT \
  { PROTOBUF_C_MESSAGE_INIT (&rtc__event_log__descriptor) \
-, 0, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, RTC__SOURCE__SOURCE_SERVER, RTC__EVENT_TYPE__EVENT_UNKNOWN, 0, 0, 0, (char *)protobuf_c_empty_string, 0 }
+, 0, 0, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, RTC__SOURCE__SOURCE_SERVER, RTC__CHANNEL__CHANNEL_SFU, RTC__EVENT_TYPE__EVENT_UNKNOWN, 0, 0, 0, (char *)protobuf_c_empty_string }
 
 
 /* Rtc__SignalRequest methods */

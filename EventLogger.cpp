@@ -34,6 +34,7 @@ struct PendingEvent {
     int32_t errCode = 0;
     int64_t extNum = 0;
     string extJson;
+    Rtc__Channel channel = RTC__CHANNEL__CHANNEL_SFU;
     int64_t rawTimeMs = 0; // 未加 clockOffset 的墙钟
     string roomId;
     string peerId;
@@ -44,6 +45,7 @@ struct PendingEvent {
 Rtc__EventLog MakeEventLog(PendingEvent& e, int64_t offset) {
     Rtc__EventLog msg = RTC__EVENT_LOG__INIT;
     msg.source = RTC__SOURCE__SOURCE_CLIENT;
+    msg.channel = e.channel;
     msg.event_type = e.type;
     msg.event_time = e.rawTimeMs + offset;
     msg.err_code = e.errCode;
@@ -238,19 +240,16 @@ void EventLogger::accept() {
 }
 
 void EventLogger::hangup(Rtc__HangupReason reason) {
-    log(RTC__EVENT_TYPE__EVENT_HANGUP, 0, static_cast<int64_t>(reason));
+    log(RTC__EVENT_TYPE__EVENT_HANGUP, RTC__CHANNEL__CHANNEL_SFU, static_cast<int64_t>(reason));
 }
 
-void EventLogger::log(Rtc__EventType type,
-                      int32_t errCode,
-                      int64_t extNum,
-                      string extJson,
-                      int64_t eventTimeMs) {
+void EventLogger::log(Rtc__EventType type, Rtc__Channel channel, int64_t extNum, string extJson, int32_t errCode, int64_t eventTimeMs) {
     PendingEvent e{
         .type = type,
         .errCode = errCode,
         .extNum = extNum,
         .extJson = std::move(extJson),
+        .channel = channel,
         .rawTimeMs = eventTimeMs > 0 ? eventTimeMs : WallNowMs(),
     };
     {

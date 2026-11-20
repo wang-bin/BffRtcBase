@@ -104,7 +104,7 @@ private:
     bool sendRequest(Rtc__SignalRequest& req, bool important = false);
     // 发送失败则入队重发；返回已分配的 msg id（便于登记 RESP 事件）
     uint32_t requestOrAgain(Rtc__SignalRequest& req);
-    void trackRespEvent(uint32_t reqId, Rtc__EventType type);
+    void trackRespEvent(uint32_t reqId, Rtc__EventType type, Rtc__Channel channel);
     void emitRespEventIfAny(uint32_t reqId);
     void sendJoin(int channel);
     uint32_t sendLeave();

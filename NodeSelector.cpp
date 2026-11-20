@@ -491,8 +491,7 @@ void NodeSelector::updateNodesInternal(const std::string& server,
             return;
         }
         if (!r.error.empty() || r.httpCode < 200 || r.httpCode >= 300) {
-            EventLogger::shared().log(RTC__EVENT_TYPE__EVENT_NODELIST_RESP,
-                                      r.httpCode != 0 ? r.httpCode : -1);
+            EventLogger::shared().log(RTC__EVENT_TYPE__EVENT_NODELIST_RESP, RTC__CHANNEL__CHANNEL_SFU, 0, {}, r.httpCode != 0 ? r.httpCode : -1);
             ERROR("get nodelist failed");
             autoDone();
             return;
@@ -500,7 +499,7 @@ void NodeSelector::updateNodesInternal(const std::string& server,
 
         json j = json::parse(r.responseBody, nullptr, false);
         if (j.is_discarded()) {
-            EventLogger::shared().log(RTC__EVENT_TYPE__EVENT_NODELIST_RESP, -2);
+            EventLogger::shared().log(RTC__EVENT_TYPE__EVENT_NODELIST_RESP, RTC__CHANNEL__CHANNEL_SFU, 0, {}, -2);
             ERROR("parse nodelist failed");
             autoDone();
             return;

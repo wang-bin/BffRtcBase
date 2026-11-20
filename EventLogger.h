@@ -35,11 +35,9 @@ public:
     std::optional<int64_t> clockOffset();
     void flush();
 
-    void log(Rtc__EventType type,
-             int32_t errCode = 0,
-             int64_t extNum = 0,
-             std::string extJson = {},
-             int64_t eventTimeMs = 0);
+    // channel：SFU/Mesh 通道（0-SFU, 1-MESH）；errCode 少用，放在可选参数末尾
+    void log(Rtc__EventType type, Rtc__Channel channel = RTC__CHANNEL__CHANNEL_SFU,
+             int64_t extNum = 0, std::string extJson = {}, int32_t errCode = 0, int64_t eventTimeMs = 0);
 
     void invite();
     void ringing();

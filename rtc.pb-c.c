@@ -4803,7 +4803,7 @@ const ProtobufCMessageDescriptor rtc__stats_log__descriptor =
   (ProtobufCMessageInit) rtc__stats_log__init,
   NULL,NULL,NULL    /* reserved[123] */
 };
-static const ProtobufCFieldDescriptor rtc__event_log__field_descriptors[11] =
+static const ProtobufCFieldDescriptor rtc__event_log__field_descriptors[12] =
 {
   {
     "id",
@@ -4818,8 +4818,20 @@ static const ProtobufCFieldDescriptor rtc__event_log__field_descriptors[11] =
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
   {
-    "app_id",
+    "create_time",
     2,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_INT64,
+    0,   /* quantifier_offset */
+    offsetof(Rtc__EventLog, create_time),
+    NULL,
+    NULL,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+  {
+    "app_id",
+    3,
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_STRING,
     0,   /* quantifier_offset */
@@ -4831,7 +4843,7 @@ static const ProtobufCFieldDescriptor rtc__event_log__field_descriptors[11] =
   },
   {
     "room_id",
-    3,
+    4,
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_STRING,
     0,   /* quantifier_offset */
@@ -4843,7 +4855,7 @@ static const ProtobufCFieldDescriptor rtc__event_log__field_descriptors[11] =
   },
   {
     "peer_id",
-    4,
+    5,
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_STRING,
     0,   /* quantifier_offset */
@@ -4855,7 +4867,7 @@ static const ProtobufCFieldDescriptor rtc__event_log__field_descriptors[11] =
   },
   {
     "source",
-    5,
+    6,
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_ENUM,
     0,   /* quantifier_offset */
@@ -4866,8 +4878,20 @@ static const ProtobufCFieldDescriptor rtc__event_log__field_descriptors[11] =
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
   {
+    "channel",
+    7,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_ENUM,
+    0,   /* quantifier_offset */
+    offsetof(Rtc__EventLog, channel),
+    &rtc__channel__descriptor,
+    NULL,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+  {
     "event_type",
-    6,
+    8,
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_ENUM,
     0,   /* quantifier_offset */
@@ -4879,7 +4903,7 @@ static const ProtobufCFieldDescriptor rtc__event_log__field_descriptors[11] =
   },
   {
     "event_time",
-    7,
+    9,
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_INT64,
     0,   /* quantifier_offset */
@@ -4891,7 +4915,7 @@ static const ProtobufCFieldDescriptor rtc__event_log__field_descriptors[11] =
   },
   {
     "err_code",
-    8,
+    10,
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_INT32,
     0,   /* quantifier_offset */
@@ -4903,7 +4927,7 @@ static const ProtobufCFieldDescriptor rtc__event_log__field_descriptors[11] =
   },
   {
     "ext_num",
-    9,
+    11,
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_INT64,
     0,   /* quantifier_offset */
@@ -4915,7 +4939,7 @@ static const ProtobufCFieldDescriptor rtc__event_log__field_descriptors[11] =
   },
   {
     "ext_json",
-    10,
+    12,
     PROTOBUF_C_LABEL_NONE,
     PROTOBUF_C_TYPE_STRING,
     0,   /* quantifier_offset */
@@ -4925,36 +4949,25 @@ static const ProtobufCFieldDescriptor rtc__event_log__field_descriptors[11] =
     0,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
-  {
-    "create_time",
-    11,
-    PROTOBUF_C_LABEL_NONE,
-    PROTOBUF_C_TYPE_INT64,
-    0,   /* quantifier_offset */
-    offsetof(Rtc__EventLog, create_time),
-    NULL,
-    NULL,
-    0,             /* flags */
-    0,NULL,NULL    /* reserved1,reserved2, etc */
-  },
 };
 static const unsigned rtc__event_log__field_indices_by_name[] = {
-  1,   /* field[1] = app_id */
-  10,   /* field[10] = create_time */
-  7,   /* field[7] = err_code */
-  6,   /* field[6] = event_time */
-  5,   /* field[5] = event_type */
-  9,   /* field[9] = ext_json */
-  8,   /* field[8] = ext_num */
+  2,   /* field[2] = app_id */
+  6,   /* field[6] = channel */
+  1,   /* field[1] = create_time */
+  9,   /* field[9] = err_code */
+  8,   /* field[8] = event_time */
+  7,   /* field[7] = event_type */
+  11,   /* field[11] = ext_json */
+  10,   /* field[10] = ext_num */
   0,   /* field[0] = id */
-  3,   /* field[3] = peer_id */
-  2,   /* field[2] = room_id */
-  4,   /* field[4] = source */
+  4,   /* field[4] = peer_id */
+  3,   /* field[3] = room_id */
+  5,   /* field[5] = source */
 };
 static const ProtobufCIntRange rtc__event_log__number_ranges[1 + 1] =
 {
   { 1, 0 },
-  { 0, 11 }
+  { 0, 12 }
 };
 const ProtobufCMessageDescriptor rtc__event_log__descriptor =
 {
@@ -4964,7 +4977,7 @@ const ProtobufCMessageDescriptor rtc__event_log__descriptor =
   "Rtc__EventLog",
   "rtc",
   sizeof(Rtc__EventLog),
-  11,
+  12,
   rtc__event_log__field_descriptors,
   rtc__event_log__field_indices_by_name,
   1,  rtc__event_log__number_ranges,
